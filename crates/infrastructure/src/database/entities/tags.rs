@@ -6,9 +6,8 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: String,
-    pub driver_type: String,
-    pub driver_config: Json,
-    pub edge_agent_id: String,
+    pub device_id: String,
+    pub source_config: Json,
     pub update_mode: String,
     pub update_config: Json,
     pub value_type: String,
@@ -29,20 +28,20 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::edge_agents::Entity",
-        from = "Column::EdgeAgentId",
-        to = "super::edge_agents::Column::Id",
+        belongs_to = "super::devices::Entity",
+        from = "Column::DeviceId",
+        to = "super::devices::Column::Id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    EdgeAgent,
+    Device,
     #[sea_orm(has_many = "super::tag_history::Entity")]
     TagHistory,
 }
 
-impl Related<super::edge_agents::Entity> for Entity {
+impl Related<super::devices::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EdgeAgent.def()
+        Relation::Device.def()
     }
 }
 

@@ -7,8 +7,10 @@ pub enum TagUpdateMode {
     /// Event-driven: only report when data changes
     OnChange {
         /// Min time between updates (ms)
+        #[serde(default = "default_debounce")]
         debounce_ms: u64,
         /// Mark offline if no data (ms)
+        #[serde(default = "default_timeout")]
         timeout_ms: u64,
     },
 
@@ -44,6 +46,14 @@ impl TagUpdateMode {
     pub fn is_polling(&self) -> bool {
         matches!(self, Self::Polling { .. } | Self::PollingOnChange { .. })
     }
+}
+
+fn default_debounce() -> u64 {
+    100
+}
+
+fn default_timeout() -> u64 {
+    5000
 }
 
 #[cfg(test)]

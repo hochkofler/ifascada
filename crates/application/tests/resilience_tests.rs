@@ -144,14 +144,14 @@ async fn test_infinite_retry_on_startup() {
 
     let tag = Tag::new(
         TagId::new("RETRY_TAG").unwrap(),
-        domain::driver::DriverType::RS232,
+        "device-retry".to_string(),
         json!({"port": "COM_FAIL"}),
-        "test-agent".to_string(),
         TagUpdateMode::OnChange {
             debounce_ms: 10,
             timeout_ms: 5000,
         },
         TagValueType::Simple,
+        domain::tag::PipelineConfig::default(),
     );
 
     let (publisher, mut rx_events) = ChannelEventPublisher::new();
@@ -180,8 +180,9 @@ async fn test_infinite_retry_on_startup() {
 
     let mut connected = false;
     // We loop enough times to cover the backoff (1s, 2s, 4s = 7s total wait + execution time)
-    // 20 iterations of 1s = 20s simulated time, plenty.
-    for i in 0..20 {
+    // Actually, TagExecutor has a minimum backoff of 10s.
+    // So 3 failures = 30s+ wait. We need more time.
+    for i in 0..50 {
         // Advance time by 1s
         tokio::time::advance(Duration::from_secs(1)).await;
 
@@ -204,7 +205,7 @@ async fn test_infinite_retry_on_startup() {
 
     assert!(
         connected,
-        "Did not receive TagConnected event within 20s (simulated)"
+        "Did not receive TagConnected event within 50s (simulated)"
     );
 
     handle.abort();
@@ -218,14 +219,14 @@ async fn test_runtime_self_healing() {
 
     let tag = Tag::new(
         TagId::new("HEAL_TAG").unwrap(),
-        domain::driver::DriverType::RS232,
+        "device-heal".to_string(),
         json!({"port": "COM_OK"}),
-        "test-agent".to_string(),
         TagUpdateMode::OnChange {
             debounce_ms: 10,
             timeout_ms: 1000,
         },
         TagValueType::Simple,
+        domain::tag::PipelineConfig::default(),
     );
 
     let (publisher, mut rx_events) = ChannelEventPublisher::new();

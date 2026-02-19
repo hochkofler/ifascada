@@ -40,6 +40,53 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // Create devices table
+        manager
+            .create_table(
+                Table::create()
+                    .table(Devices::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(Devices::Id)
+                            .string()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(Devices::EdgeAgentId).string().not_null())
+                    .col(ColumnDef::new(Devices::Name).string().not_null())
+                    .col(ColumnDef::new(Devices::DriverType).string().not_null())
+                    .col(
+                        ColumnDef::new(Devices::ConnectionConfig)
+                            .json_binary()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Devices::Enabled)
+                            .boolean()
+                            .not_null()
+                            .default(true),
+                    )
+                    .col(
+                        ColumnDef::new(Devices::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(
+                        ColumnDef::new(Devices::UpdatedAt)
+                            .timestamp_with_time_zone()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_device_agent")
+                            .from(Devices::Table, Devices::EdgeAgentId)
+                            .to(EdgeAgents::Table, EdgeAgents::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
         // Create tags table
         manager
             .create_table(
@@ -47,13 +94,13 @@ impl MigrationTrait for Migration {
                     .table(Tags::Table)
                     .if_not_exists()
                     .col(ColumnDef::new(Tags::Id).string().not_null().primary_key())
-                    .col(ColumnDef::new(Tags::DriverType).string().not_null())
-                    .col(ColumnDef::new(Tags::DriverConfig).json_binary().not_null())
-                    .col(ColumnDef::new(Tags::EdgeAgentId).string().not_null())
+                    .col(ColumnDef::new(Tags::SourceConfig).json_binary().not_null())
+                    .col(ColumnDef::new(Tags::DeviceId).string().not_null())
                     .col(ColumnDef::new(Tags::UpdateMode).string().not_null())
                     .col(ColumnDef::new(Tags::UpdateConfig).json_binary().not_null())
                     .col(ColumnDef::new(Tags::ValueType).string().not_null())
                     .col(ColumnDef::new(Tags::ValueSchema).json_binary())
+                    .col(ColumnDef::new(Tags::PipelineConfig).json_binary())
                     .col(
                         ColumnDef::new(Tags::Enabled)
                             .boolean()
@@ -91,41 +138,111 @@ impl MigrationTrait for Migration {
                     )
                     .foreign_key(
                         ForeignKey::create()
-                            .name("fk_edge_agent")
-                            .from(Tags::Table, Tags::EdgeAgentId)
-                            .to(EdgeAgents::Table, EdgeAgents::Id)
+                            .name("fk_tag_device")
+                            .from(Tags::Table, Tags::DeviceId)
+                            .to(Devices::Table, Devices::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
                     .to_owned(),
             )
             .await?;
 
-        // Create tag_history table
+        // Create reports table
         manager
             .create_table(
                 Table::create()
-                    .table(TagHistory::Table)
+                    .table(Reports::Table)
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(TagHistory::Id)
+                        ColumnDef::new(Reports::Id)
+                            .uuid() // Using UUID for Report ID
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(Reports::AgentId).string().not_null())
+                    .col(
+                        ColumnDef::new(Reports::StartTime)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Reports::EndTime)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .col(ColumnDef::new(Reports::TotalValue).json_binary())
+                    .col(
+                        ColumnDef::new(Reports::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(ColumnDef::new(Reports::ReportId).string()) // Legacy/External ID support
+                    .to_owned(),
+            )
+            .await?;
+
+        // Create report_items table
+        manager
+            .create_table(
+                Table::create()
+                    .table(ReportItems::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(ReportItems::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(ReportItems::ReportId).uuid().not_null())
+                    .col(ColumnDef::new(ReportItems::TagId).string().not_null())
+                    .col(ColumnDef::new(ReportItems::Value).json_binary().not_null())
+                    .col(
+                        ColumnDef::new(ReportItems::Timestamp)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_report_item_report")
+                            .from(ReportItems::Table, ReportItems::ReportId)
+                            .to(Reports::Table, Reports::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // Create tag_events table (Replacing TagHistory)
+        manager
+            .create_table(
+                Table::create()
+                    .table(TagEvents::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(TagEvents::Id)
                             .big_integer()
                             .not_null()
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(TagHistory::TagId).string().not_null())
-                    .col(ColumnDef::new(TagHistory::Value).json_binary().not_null())
-                    .col(ColumnDef::new(TagHistory::Quality).string().not_null())
+                    .col(ColumnDef::new(TagEvents::TagId).string().not_null())
+                    .col(ColumnDef::new(TagEvents::Value).json_binary().not_null())
+                    .col(ColumnDef::new(TagEvents::Quality).string().not_null())
                     .col(
-                        ColumnDef::new(TagHistory::Timestamp)
+                        ColumnDef::new(TagEvents::Timestamp)
                             .timestamp_with_time_zone()
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
+                    .col(
+                        ColumnDef::new(TagEvents::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .default(Expr::current_timestamp()),
+                    )
                     .foreign_key(
                         ForeignKey::create()
-                            .name("fk_tag")
-                            .from(TagHistory::Table, TagHistory::TagId)
+                            .name("fk_tag_event_tag")
+                            .from(TagEvents::Table, TagEvents::TagId)
                             .to(Tags::Table, Tags::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
@@ -133,15 +250,15 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // Create index on tag_history (tag_id, timestamp DESC)
+        // Create index on tag_events (tag_id, timestamp DESC)
         manager
             .create_index(
                 Index::create()
                     .if_not_exists()
-                    .name("idx_tag_history_tag_time")
-                    .table(TagHistory::Table)
-                    .col(TagHistory::TagId)
-                    .col(TagHistory::Timestamp)
+                    .name("idx_tag_events_tag_time")
+                    .table(TagEvents::Table)
+                    .col(TagEvents::TagId)
+                    .col(TagEvents::Timestamp)
                     .to_owned(),
             )
             .await?;
@@ -151,11 +268,24 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(Table::drop().table(TagHistory::Table).to_owned())
+            .drop_table(Table::drop().table(ReportItems::Table).to_owned())
             .await?;
+        manager
+            .drop_table(Table::drop().table(Reports::Table).to_owned())
+            .await?;
+
+        manager
+            .drop_table(Table::drop().table(TagEvents::Table).to_owned())
+            .await?;
+
         manager
             .drop_table(Table::drop().table(Tags::Table).to_owned())
             .await?;
+
+        manager
+            .drop_table(Table::drop().table(Devices::Table).to_owned())
+            .await?;
+
         manager
             .drop_table(Table::drop().table(EdgeAgents::Table).to_owned())
             .await?;
@@ -180,13 +310,13 @@ enum EdgeAgents {
 enum Tags {
     Table,
     Id,
-    DriverType,
-    DriverConfig,
-    EdgeAgentId,
+    SourceConfig, // Replaces DriverType/Config
+    DeviceId,
     UpdateMode,
     UpdateConfig,
     ValueType,
     ValueSchema,
+    PipelineConfig,
     Enabled,
     Description,
     Metadata,
@@ -200,11 +330,48 @@ enum Tags {
 }
 
 #[derive(DeriveIden)]
-enum TagHistory {
+enum TagEvents {
+    // Renamed from TagHistory
     Table,
     Id,
     TagId,
     Value,
     Quality,
+    Timestamp,
+    CreatedAt,
+}
+
+#[derive(DeriveIden)]
+enum Devices {
+    Table,
+    Id,
+    EdgeAgentId,
+    Name,
+    DriverType,
+    ConnectionConfig,
+    Enabled,
+    CreatedAt,
+    UpdatedAt,
+}
+
+#[derive(DeriveIden)]
+enum Reports {
+    Table,
+    Id,
+    ReportId,
+    AgentId,
+    StartTime,
+    EndTime,
+    TotalValue,
+    CreatedAt,
+}
+
+#[derive(DeriveIden)]
+enum ReportItems {
+    Table,
+    Id,
+    ReportId,
+    TagId,
+    Value,
     Timestamp,
 }

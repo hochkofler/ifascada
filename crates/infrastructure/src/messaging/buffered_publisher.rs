@@ -155,6 +155,7 @@ impl EventPublisher for BufferedMqttPublisher {
             // For heartbeats, we try best effort but don't buffer
             if let DomainEvent::AgentHeartbeat {
                 agent_id,
+                config_version, // NEW
                 uptime_secs,
                 active_tags,
                 active_tag_ids,
@@ -164,6 +165,7 @@ impl EventPublisher for BufferedMqttPublisher {
                 let topic = format!("scada/health/{}", agent_id);
                 let payload = json!({
                     "uptime": uptime_secs,
+                    "version": config_version, // NEW
                     "tags": active_tags,
                     "tag_ids": active_tag_ids,
                     "ts": timestamp.timestamp_millis()

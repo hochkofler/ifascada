@@ -13,6 +13,7 @@
 //! - Testable in isolation
 
 pub mod automation;
+pub mod device; // NEW
 pub mod driver;
 pub mod error;
 pub mod event;

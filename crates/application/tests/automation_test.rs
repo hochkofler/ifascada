@@ -53,8 +53,9 @@ async fn test_consecutive_zeros_trigger() {
 
     let tag_config = TagConfig {
         id: "SCALE_TEST".to_string(),
-        driver: domain::driver::DriverType::Simulator,
-        driver_config: json!({}),
+        device_id: None,                                     // NEW
+        driver: Some(domain::driver::DriverType::Simulator), // Option
+        driver_config: Some(json!({})),                      // Option
         update_mode: None,
         value_type: None,
         value_schema: None,
@@ -131,8 +132,9 @@ async fn test_composite_value_trigger() {
 
     let tag_config = TagConfig {
         id: "SCALE_COMPOSITE".to_string(),
-        driver: domain::driver::DriverType::Simulator,
-        driver_config: json!({}),
+        device_id: None,                                     // NEW
+        driver: Some(domain::driver::DriverType::Simulator), // Option
+        driver_config: Some(json!({})),                      // Option
         update_mode: None,
         value_type: Some(domain::tag::TagValueType::Composite),
         value_schema: Some(json!({"primary": "weight"})),

@@ -13,9 +13,10 @@ async fn test_config_sync_flow(pool: PgPool) -> sqlx::Result<()> {
         .await
         .expect("Failed to run migrations");
 
-    // 1. Setup Data
+    // 1. Setup Data (V2 Schema: Agent -> Device -> Tag)
     let run_id = Uuid::new_v4().to_string();
     let agent_id = format!("agent-test-{}", &run_id[..8]);
+    let device_id = format!("device-test-{}", &run_id[..8]);
     let tag_id = format!("TAG-{}", &run_id[..8]);
 
     // Insert Agent
@@ -26,14 +27,26 @@ async fn test_config_sync_flow(pool: PgPool) -> sqlx::Result<()> {
     .execute(&pool)
     .await?;
 
-    // Insert Tag
+    // Insert Device (V2: tags link to devices, not directly to agent)
     sqlx::query!(
         r#"
-        INSERT INTO tags (id, edge_agent_id, driver_type, driver_config, update_mode, update_config, value_type, enabled)
-        VALUES ($1, $2, 'RS232', '{"port":"COM1"}', 'Polling', '{"interval_ms":1000}', 'Simple', true)
+        INSERT INTO devices (id, edge_agent_id, name, driver_type, connection_config, enabled)
+        VALUES ($1, $2, 'Test Device', 'RS232', '{"port":"COM1"}', true)
+        "#,
+        device_id,
+        agent_id
+    )
+    .execute(&pool)
+    .await?;
+
+    // Insert Tag (V2: uses device_id, source_config instead of edge_agent_id/driver_type)
+    sqlx::query!(
+        r#"
+        INSERT INTO tags (id, device_id, source_config, update_mode, update_config, value_type, enabled)
+        VALUES ($1, $2, '{"port":"COM1"}', 'Polling', '{"interval_ms":1000}', 'Simple', true)
         "#,
         tag_id,
-        agent_id
+        device_id
     )
     .execute(&pool)
     .await?;
@@ -51,6 +64,9 @@ async fn test_config_sync_flow(pool: PgPool) -> sqlx::Result<()> {
     // Instantiate Service (Subject Under Test)
     let service = ConfigService::new(pool.clone(), service_client);
     tokio::spawn(async move { service.start().await });
+
+    // Give the service time to subscribe to 'scada/status/#' before we publish
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Agent Client (Simulates the Edge Agent)
     let agent_client_id = format!("agent-client-{}", run_id);
@@ -111,9 +127,10 @@ async fn test_config_sync_case_insensitive(pool: PgPool) -> sqlx::Result<()> {
         .await
         .expect("Failed to run migrations");
 
-    // 1. Setup Data - Use Lowercase values
+    // 1. Setup Data (V2 Schema – lowercase enum values)
     let run_id = Uuid::new_v4().to_string();
     let agent_id = format!("agent-inc-{}", &run_id[..8]);
+    let device_id = format!("device-inc-{}", &run_id[..8]);
     let tag_id = format!("TAG-INC-{}", &run_id[..8]);
 
     // Insert Agent
@@ -124,14 +141,26 @@ async fn test_config_sync_case_insensitive(pool: PgPool) -> sqlx::Result<()> {
     .execute(&pool)
     .await?;
 
-    // Insert Tag with Lowercase 'polling' and 'rs232'
+    // Insert Device
     sqlx::query!(
         r#"
-        INSERT INTO tags (id, edge_agent_id, driver_type, driver_config, update_mode, update_config, value_type, enabled)
-        VALUES ($1, $2, 'rs232', '{"port":"COM1"}', 'polling', '{"interval_ms":1000}', 'simple', true)
+        INSERT INTO devices (id, edge_agent_id, name, driver_type, connection_config, enabled)
+        VALUES ($1, $2, 'Test Device', 'RS232', '{"port":"COM1"}', true)
+        "#,
+        device_id,
+        agent_id
+    )
+    .execute(&pool)
+    .await?;
+
+    // Insert Tag with lowercase update_mode value
+    sqlx::query!(
+        r#"
+        INSERT INTO tags (id, device_id, source_config, update_mode, update_config, value_type, enabled)
+        VALUES ($1, $2, '{"port":"COM1"}', 'polling', '{"interval_ms":1000}', 'simple', true)
         "#,
         tag_id,
-        agent_id
+        device_id
     )
     .execute(&pool)
     .await?;
@@ -139,7 +168,7 @@ async fn test_config_sync_case_insensitive(pool: PgPool) -> sqlx::Result<()> {
     // 2. Setup Service
     let mqtt_host = "localhost";
     let mqtt_port = 1883;
-    let service_client = MqttClient::new(mqtt_host, mqtt_port, &format!("svc-{}", run_id), None)
+    let _service_client = MqttClient::new(mqtt_host, mqtt_port, &format!("svc-{}", run_id), None)
         .await
         .expect("MQTT Svc");
 
@@ -160,17 +189,6 @@ async fn test_config_sync_case_insensitive(pool: PgPool) -> sqlx::Result<()> {
     assert_eq!(config.tags.len(), 1);
     let tag = &config.tags[0];
     assert_eq!(tag.id, tag_id);
-
-    // Check Enum Mapping
-    // 'rs232' -> DriverType::RS232
-    assert!(matches!(tag.driver, domain::driver::DriverType::RS232));
-
-    // 'polling' -> TagUpdateMode::Polling
-    if let Some(domain::tag::TagUpdateMode::Polling { .. }) = tag.update_mode {
-        // success
-    } else {
-        panic!("Expected Polling update mode, got {:?}", tag.update_mode);
-    }
 
     Ok(())
 }

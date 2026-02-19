@@ -50,6 +50,11 @@ impl PrinterManager {
                          self.connect_loop().await;
                     }
                 }
+                else => {
+                    // All senders dropped — printer channel closed, exit loop gracefully
+                    info!("🖨️ Printer job channel closed. PrinterManager shutting down.");
+                    break;
+                }
             }
         }
     }

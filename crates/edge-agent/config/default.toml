@@ -1,7 +1,7 @@
-agent_id = "test-agent-rs232"
+agent_id = "test-agent-01"
 
 [mqtt]
-host = "localhost"
+host = "192.168.103.70"
 port = 1883
 status_topic = "scada/status"
 
@@ -12,8 +12,16 @@ path = "\\\\192.168.103.154\\EPSON TM-U220 Receipt LCC"
 
 # Tags will be loaded from Central Server via MQTT
 # stored in config/last_known.json
+
+[[devices]]
+id = "simulator_01"
+driver = "Simulator"
+enabled = true
+connection_config = { min_value = 0.0, max_value = 1.0 }
+
 [[tags]]
 id = "WAITING_FOR_SYNC"
+device_id = "simulator_01" # Required in device-centric architecture
 driver = "Simulator"
 driver_config = { min_value = 0.0, max_value = 0.0, interval_ms = 10000, unit = "none", pattern = "constant" }
 update_mode = { type = "Polling", interval_ms = 10000 }

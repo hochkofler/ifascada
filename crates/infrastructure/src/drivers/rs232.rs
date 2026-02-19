@@ -9,6 +9,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
+use domain::device::Device;
+use domain::driver::DeviceDriver;
+use domain::tag::{Tag, TagId};
+
 /// RS232 driver configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RS232Config {
@@ -336,5 +340,158 @@ mod tests {
         let result = driver.disconnect().await;
         assert!(result.is_ok());
         assert_eq!(driver.connection_state(), ConnectionState::Disconnected);
+    }
+}
+
+/// Device Driver Implementation for RS232 (Stream/Batch)
+pub struct RS232DeviceDriver {
+    config: RS232Config,
+    tags: Vec<Tag>,
+    port: Option<Arc<Mutex<SerialStream>>>,
+    state: Arc<Mutex<ConnectionState>>,
+}
+
+impl RS232DeviceDriver {
+    pub fn new(device: Device, tags: Vec<Tag>) -> Result<Self, DomainError> {
+        let config: RS232Config =
+            serde_json::from_value(device.connection_config).map_err(|e| {
+                DomainError::InvalidDriverConfig(format!("Invalid RS232 Config: {}", e))
+            })?;
+
+        Ok(Self {
+            config,
+            tags,
+            port: None,
+            state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
+        })
+    }
+}
+
+#[async_trait]
+impl DeviceDriver for RS232DeviceDriver {
+    async fn connect(&mut self) -> Result<(), DomainError> {
+        let mut state = self.state.lock().await;
+        let port_name = if cfg!(target_os = "windows")
+            && !self.config.port.to_uppercase().starts_with(r"\\.\")
+        {
+            format!(r"\\.\{}", self.config.port)
+        } else {
+            self.config.port.clone()
+        };
+
+        let port = tokio_serial::new(&port_name, self.config.baud_rate)
+            .data_bits(self.config.to_data_bits()?)
+            .parity(self.config.to_parity()?)
+            .stop_bits(self.config.to_stop_bits()?)
+            .timeout(Duration::from_millis(self.config.timeout_ms))
+            .open_native_async()
+            .map_err(|e| {
+                let err_msg = format!("Failed to open serial port {}: {}", port_name, e);
+                tracing::warn!("{}", err_msg);
+                *state = ConnectionState::Failed;
+                DomainError::DriverError(err_msg)
+            })?;
+
+        self.port = Some(Arc::new(Mutex::new(port)));
+        *state = ConnectionState::Connected;
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> Result<(), DomainError> {
+        if let Some(port_arc) = self.port.take() {
+            // Just dropping it closes it in most cases, but we can try shutdown
+            let mut port = port_arc.lock().await;
+            let _ = port.shutdown().await;
+        }
+        let mut state = self.state.lock().await;
+        *state = ConnectionState::Disconnected;
+        Ok(())
+    }
+
+    fn is_connected(&self) -> bool {
+        self.port.is_some()
+    }
+
+    fn connection_state(&self) -> ConnectionState {
+        match self.state.try_lock() {
+            Ok(s) => *s,
+            Err(_) => ConnectionState::Connecting,
+        }
+    }
+
+    async fn poll(
+        &mut self,
+    ) -> Result<Vec<(TagId, Result<serde_json::Value, DomainError>)>, DomainError> {
+        let port_arc = self
+            .port
+            .as_ref()
+            .ok_or_else(|| DomainError::DriverError("Port not connected".to_string()))?;
+
+        let mut port = port_arc.lock().await;
+        let mut buffer = vec![0u8; 1024];
+
+        match port.read(&mut buffer).await {
+            Ok(0) => Ok(vec![]), // EOF or empty
+            Ok(n) => {
+                let data = &buffer[..n];
+                // Simple strategy: Try to parse as String/JSON and assign to ALL tags attached to this device
+                // Real usage would require a parser/splitter based on Tag config.
+
+                let value = match String::from_utf8(data.to_vec()) {
+                    Ok(s) => {
+                        let trimmed = s.trim();
+                        if trimmed.is_empty() {
+                            return Ok(vec![]);
+                        }
+                        match serde_json::from_str::<serde_json::Value>(trimmed) {
+                            Ok(json) => json,
+                            Err(_) => serde_json::Value::String(trimmed.to_string()),
+                        }
+                    }
+                    Err(_) => {
+                        let hex = data
+                            .iter()
+                            .map(|b| format!("{:02X}", b))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        serde_json::Value::String(hex)
+                    }
+                };
+
+                let results = self
+                    .tags
+                    .iter()
+                    .map(|tag| (tag.id().clone(), Ok(value.clone())))
+                    .collect();
+
+                Ok(results)
+            }
+            Err(e) => Err(DomainError::DriverError(format!("Read error: {}", e))),
+        }
+    }
+
+    async fn write(
+        &mut self,
+        _tag_id: &TagId,
+        value: serde_json::Value,
+    ) -> Result<(), DomainError> {
+        let port_arc = self
+            .port
+            .as_ref()
+            .ok_or_else(|| DomainError::DriverError("Port not connected".to_string()))?;
+
+        let mut port = port_arc.lock().await;
+        let data = match value {
+            serde_json::Value::String(s) => s.into_bytes(),
+            other => serde_json::to_string(&other).unwrap().into_bytes(),
+        };
+
+        port.write_all(&data)
+            .await
+            .map_err(|e| DomainError::DriverError(format!("Write error: {}", e)))?;
+        port.flush()
+            .await
+            .map_err(|e| DomainError::DriverError(format!("Flush error: {}", e)))?;
+        Ok(())
     }
 }

@@ -33,10 +33,11 @@ impl TagId {
         // Validate characters
         if !id
             .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '/')
         {
             return Err(DomainError::InvalidTagId(
-                "Tag ID must contain only alphanumeric, underscore, and hyphen".to_string(),
+                "Tag ID must contain only alphanumeric, underscore, hyphen, and forward slash"
+                    .to_string(),
             ));
         }
 
@@ -69,6 +70,12 @@ mod tests {
     fn test_tag_id_with_hyphen() {
         let id = TagId::new("TEMP-REACTOR-01").unwrap();
         assert_eq!(id.as_str(), "TEMP-REACTOR-01");
+    }
+
+    #[test]
+    fn test_tag_id_hierarchical() {
+        let id = TagId::new("plant1/area2/unit3/temp").unwrap();
+        assert_eq!(id.as_str(), "plant1/area2/unit3/temp");
     }
 
     #[test]

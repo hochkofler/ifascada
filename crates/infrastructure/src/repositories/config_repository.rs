@@ -6,6 +6,7 @@ use domain::tag::{Tag, TagId, TagRepository, TagUpdateMode, TagValueType};
 
 #[derive(Clone)]
 pub struct ConfigTagRepository {
+    agent_id: String,
     tags: Vec<Tag>,
 }
 
@@ -13,15 +14,44 @@ impl ConfigTagRepository {
     pub fn new(agent_id: &str, tag_configs: Vec<TagConfig>) -> Self {
         let tags = tag_configs
             .into_iter()
-            .map(|cfg| {
+            .filter_map(|cfg| {
+                let mut pipeline = cfg.pipeline.unwrap_or_default();
+                if !cfg.automations.is_empty() {
+                    pipeline.automations = cfg.automations;
+                }
+
+                let tag_id = match TagId::new(&cfg.id) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::error!("Invalid Tag ID '{}': {}", cfg.id, e);
+                        return None;
+                    }
+                };
+
+                let device_id = match cfg.device_id {
+                    Some(id) => id,
+                    None => {
+                        tracing::error!("Tag {} is missing required device_id. Skipping.", cfg.id);
+                        return None;
+                    }
+                };
+
+                let source_config = match cfg.driver_config {
+                    Some(cfg) => cfg,
+                    None => {
+                        tracing::error!("Tag {} is missing source_config. Skipping.", cfg.id);
+                        return None;
+                    }
+                };
+
                 let mut tag = Tag::new(
-                    TagId::new(&cfg.id).unwrap(),
-                    cfg.driver,
-                    cfg.driver_config,
-                    agent_id.to_string(),
+                    tag_id,
+                    device_id,
+                    source_config,
                     cfg.update_mode
                         .unwrap_or(TagUpdateMode::Polling { interval_ms: 1000 }),
                     cfg.value_type.unwrap_or(TagValueType::Simple),
+                    pipeline,
                 );
 
                 if let Some(enabled) = cfg.enabled {
@@ -30,17 +60,14 @@ impl ConfigTagRepository {
                     }
                 }
 
-                let mut pipeline = cfg.pipeline.unwrap_or_default();
-                if !cfg.automations.is_empty() {
-                    pipeline.automations = cfg.automations;
-                }
-                tag.set_pipeline_config(pipeline);
-
-                tag
+                Some(tag)
             })
             .collect();
 
-        Self { tags }
+        Self {
+            agent_id: agent_id.to_string(),
+            tags,
+        }
     }
 }
 
@@ -60,12 +87,11 @@ impl TagRepository for ConfigTagRepository {
     }
 
     async fn find_by_agent(&self, agent_id: &str) -> Result<Vec<Tag>, DomainError> {
-        Ok(self
-            .tags
-            .iter()
-            .filter(|t| t.edge_agent_id() == agent_id)
-            .cloned()
-            .collect())
+        if self.agent_id == agent_id {
+            Ok(self.tags.clone())
+        } else {
+            Ok(vec![])
+        }
     }
 
     async fn find_enabled(&self) -> Result<Vec<Tag>, DomainError> {

@@ -2,15 +2,15 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::{PipelineConfig, TagId, TagQuality, TagStatus, TagUpdateMode, TagValueType};
-use crate::driver::DriverType;
 
 /// Tag aggregate root - main entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tag {
     id: TagId,
-    driver_type: DriverType,
-    driver_config: serde_json::Value,
-    edge_agent_id: String,
+    // driver_type: DriverType, // Removed in V2
+    source_config: serde_json::Value, // Renamed from driver_config
+    // edge_agent_id: String, // Removed in V2
+    device_id: String, // Promoted from Option
     update_mode: TagUpdateMode,
     value_type: TagValueType,
     value_schema: Option<serde_json::Value>,
@@ -33,23 +33,22 @@ impl Tag {
     /// Create a new tag
     pub fn new(
         id: TagId,
-        driver_type: DriverType,
-        driver_config: serde_json::Value,
-        edge_agent_id: String,
+        device_id: String,
+        source_config: serde_json::Value,
         update_mode: TagUpdateMode,
         value_type: TagValueType,
+        pipeline_config: PipelineConfig,
     ) -> Self {
         let now = Utc::now();
 
         Self {
             id,
-            driver_type,
-            driver_config,
-            edge_agent_id,
+            device_id,
+            source_config,
             update_mode,
             value_type,
             value_schema: None,
-            pipeline_config: PipelineConfig::default(), // Initialize with default
+            pipeline_config,
             enabled: true,
             metadata: None,
             last_value: None,
@@ -62,9 +61,26 @@ impl Tag {
         }
     }
 
+    pub fn with_device_id(mut self, device_id: String) -> Self {
+        self.device_id = device_id;
+        self
+    }
+
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
     // Getters
     pub fn id(&self) -> &TagId {
         &self.id
+    }
+
+    pub fn source_config(&self) -> &serde_json::Value {
+        &self.source_config
+    }
+
+    pub fn update_mode(&self) -> &TagUpdateMode {
+        &self.update_mode
     }
 
     pub fn status(&self) -> TagStatus {
@@ -156,23 +172,6 @@ impl Tag {
 
     pub fn pipeline_config(&self) -> &PipelineConfig {
         &self.pipeline_config
-    }
-
-    // Additional getters for repository
-    pub fn driver_type(&self) -> DriverType {
-        self.driver_type
-    }
-
-    pub fn driver_config(&self) -> &serde_json::Value {
-        &self.driver_config
-    }
-
-    pub fn edge_agent_id(&self) -> &str {
-        &self.edge_agent_id
-    }
-
-    pub fn update_mode(&self) -> &TagUpdateMode {
-        &self.update_mode
     }
 
     pub fn update_mode_type(&self) -> &str {
@@ -351,14 +350,14 @@ mod tests {
     fn create_test_tag() -> Tag {
         Tag::new(
             TagId::new("TEST_TAG").unwrap(),
-            DriverType::RS232,
-            json!({"port": "COM3"}),
-            "agent-1".to_string(),
+            "device-1".to_string(),  // Device ID
+            json!({"port": "COM3"}), // Source Config
             TagUpdateMode::OnChange {
                 debounce_ms: 100,
                 timeout_ms: 30000,
             },
             TagValueType::Simple,
+            PipelineConfig::default(),
         )
     }
 

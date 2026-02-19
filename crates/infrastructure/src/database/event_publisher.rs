@@ -42,15 +42,15 @@ impl EventPublisher for PostgresEventPublisher {
         let payload = serde_json::to_value(&event)?;
         let occurred_at = Self::to_offset(Utc::now());
 
-        sqlx::query!(
+        sqlx::query(
             r#"
-            INSERT INTO events (event_type, payload, occurred_at)
+            INSERT INTO events (type, payload, occurred_at)
             VALUES ($1, $2, $3)
             "#,
-            event_type,
-            payload,
-            occurred_at
         )
+        .bind(event_type)
+        .bind(payload)
+        .bind(occurred_at)
         .execute(&*self.pool)
         .await?;
 
@@ -75,15 +75,15 @@ impl EventPublisher for PostgresEventPublisher {
             let payload = serde_json::to_value(&event)?;
             let occurred_at = Self::to_offset(Utc::now());
 
-            sqlx::query!(
+            sqlx::query(
                 r#"
-                INSERT INTO events (event_type, payload, occurred_at)
+                INSERT INTO events (type, payload, occurred_at)
                 VALUES ($1, $2, $3)
                 "#,
-                event_type,
-                payload,
-                occurred_at
             )
+            .bind(event_type)
+            .bind(payload)
+            .bind(occurred_at)
             .execute(&mut *tx)
             .await?;
         }

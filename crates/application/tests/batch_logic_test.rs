@@ -59,8 +59,8 @@ async fn test_batch_accumulation_and_print() {
     println!("Print Output:\n{}", job_str);
 
     assert!(job_str.contains("BATCH REPORT"));
-    assert!(job_str.contains("1.       10 kg"));
-    assert!(job_str.contains("2.       20 kg"));
+    assert!(job_str.contains("1.     10.0"));
+    assert!(job_str.contains("2.     20.0"));
     assert!(job_str.contains("FIN DEL REPORTE"));
 }
 
@@ -118,7 +118,7 @@ async fn test_batch_reset_on_negative_to_positive() {
 
     println!("Print Output (Reset Test):\n{}", job_str);
 
-    assert!(job_str.contains("1.       10 kg"));
+    assert!(job_str.contains("1.     10.0"));
     assert!(
         !job_str.contains("-5"),
         "Negative value should have been cleared"

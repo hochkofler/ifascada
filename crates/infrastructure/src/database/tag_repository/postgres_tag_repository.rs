@@ -1,9 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use domain::driver::DriverType;
-use domain::tag::{
-    PipelineConfig, TagQuality, TagRepository, TagStatus, TagUpdateMode, TagValueType,
-};
+use domain::tag::{PipelineConfig, TagRepository, TagUpdateMode, TagValueType};
 use domain::{DomainError, Tag, TagId};
 use serde_json::Value as JsonValue;
 use sqlx::PgPool;
@@ -34,26 +31,28 @@ impl PostgresTagRepository {
 impl TagRepository for PostgresTagRepository {
     async fn save(&self, tag: &Tag) -> Result<(), DomainError> {
         // Serialize complex types to JSON
-        let update_mode_json = serde_json::to_value(&tag.update_mode())
+        let update_mode_json = serde_json::to_value(tag.update_mode())
             .map_err(|e| DomainError::InvalidConfiguration(e.to_string()))?;
 
-        let driver_config = tag.driver_config();
+        // source_config is already Value
+        let source_config = tag.source_config();
+
+        let update_mode_type = tag.update_mode_type();
 
         sqlx::query!(
             r#"
             INSERT INTO tags (
-                id, driver_type, driver_config, edge_agent_id,
+                id, device_id, source_config,
                 update_mode, update_config, value_type, value_schema,
                 enabled, description, metadata,
                 last_value, last_update, status, quality, error_message,
                 created_at, updated_at, pipeline_config
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
             )
             ON CONFLICT (id) DO UPDATE SET
-                driver_type = EXCLUDED.driver_type,
-                driver_config = EXCLUDED.driver_config,
-                edge_agent_id = EXCLUDED.edge_agent_id,
+                device_id = EXCLUDED.device_id,
+                source_config = EXCLUDED.source_config,
                 update_mode = EXCLUDED.update_mode,
                 update_config = EXCLUDED.update_config,
                 value_type = EXCLUDED.value_type,
@@ -68,17 +67,15 @@ impl TagRepository for PostgresTagRepository {
                 pipeline_config = EXCLUDED.pipeline_config
             "#,
             tag.id().as_str(),
-            tag.driver_type().as_str(),
-            driver_config,
-            tag.edge_agent_id(),
-            tag.update_mode_type(),
+            tag.device_id(),
+            *source_config,
+            update_mode_type,
             update_mode_json,
-            tag.value_type_str(),
+            tag.value_type_str(), // Use string representation
             tag.value_schema(),
             tag.is_enabled(),
             tag.description(),
             tag.metadata(),
-            // ... inside save method ...
             tag.last_value(),
             tag.last_update().map(Self::to_offset),
             tag.status().as_str(),
@@ -95,12 +92,10 @@ impl TagRepository for PostgresTagRepository {
         Ok(())
     }
 
-    // ...
-
     async fn find_by_id(&self, id: &TagId) -> Result<Option<Tag>, DomainError> {
         let row = sqlx::query!(
             r#"
-            SELECT id, driver_type, driver_config, edge_agent_id,
+            SELECT id, device_id, source_config,
                    update_mode, update_config, value_type, value_schema,
                    enabled, description, metadata,
                    last_value, last_update, status, quality, error_message,
@@ -118,23 +113,10 @@ impl TagRepository for PostgresTagRepository {
             Some(r) => {
                 let tag = self.row_to_tag(
                     r.id,
-                    r.driver_type,
-                    r.driver_config,
-                    r.edge_agent_id,
-                    r.update_mode,
+                    r.device_id,
+                    r.source_config,
                     r.update_config,
                     r.value_type,
-                    r.value_schema,
-                    r.enabled,
-                    r.description,
-                    r.metadata,
-                    r.last_value,
-                    r.last_update,
-                    r.status,
-                    r.quality,
-                    r.error_message,
-                    r.created_at,
-                    r.updated_at,
                     r.pipeline_config,
                 )?;
                 Ok(Some(tag))
@@ -146,7 +128,7 @@ impl TagRepository for PostgresTagRepository {
     async fn find_all(&self) -> Result<Vec<Tag>, DomainError> {
         let rows = sqlx::query!(
             r#"
-            SELECT id, driver_type, driver_config, edge_agent_id,
+            SELECT id, device_id, source_config,
                    update_mode, update_config, value_type, value_schema,
                    enabled, description, metadata,
                    last_value, last_update, status, quality, error_message,
@@ -163,23 +145,10 @@ impl TagRepository for PostgresTagRepository {
             .map(|r| {
                 self.row_to_tag(
                     r.id,
-                    r.driver_type,
-                    r.driver_config,
-                    r.edge_agent_id,
-                    r.update_mode,
+                    r.device_id,
+                    r.source_config,
                     r.update_config,
                     r.value_type,
-                    r.value_schema,
-                    r.enabled,
-                    r.description,
-                    r.metadata,
-                    r.last_value,
-                    r.last_update,
-                    r.status,
-                    r.quality,
-                    r.error_message,
-                    r.created_at,
-                    r.updated_at,
                     r.pipeline_config,
                 )
             })
@@ -187,16 +156,19 @@ impl TagRepository for PostgresTagRepository {
     }
 
     async fn find_by_agent(&self, agent_id: &str) -> Result<Vec<Tag>, DomainError> {
+        // V2: Tags are linked to Devices, Devices linked to Agent.
+        // So we need a JOIN.
         let rows = sqlx::query!(
             r#"
-            SELECT id, driver_type, driver_config, edge_agent_id,
-                   update_mode, update_config, value_type, value_schema,
-                   enabled, description, metadata,
-                   last_value, last_update, status, quality, error_message,
-                   created_at, updated_at, pipeline_config
-            FROM tags
-            WHERE edge_agent_id = $1
-            ORDER BY id
+            SELECT t.id, t.device_id, t.source_config,
+                   t.update_mode, t.update_config, t.value_type, t.value_schema,
+                   t.enabled, t.description, t.metadata,
+                   t.last_value, t.last_update, t.status, t.quality, t.error_message,
+                   t.created_at, t.updated_at, t.pipeline_config
+            FROM tags t
+            JOIN devices d ON t.device_id = d.id
+            WHERE d.edge_agent_id = $1
+            ORDER BY t.id
             "#,
             agent_id
         )
@@ -208,23 +180,10 @@ impl TagRepository for PostgresTagRepository {
             .map(|r| {
                 self.row_to_tag(
                     r.id,
-                    r.driver_type,
-                    r.driver_config,
-                    r.edge_agent_id,
-                    r.update_mode,
+                    r.device_id,
+                    r.source_config,
                     r.update_config,
                     r.value_type,
-                    r.value_schema,
-                    r.enabled,
-                    r.description,
-                    r.metadata,
-                    r.last_value,
-                    r.last_update,
-                    r.status,
-                    r.quality,
-                    r.error_message,
-                    r.created_at,
-                    r.updated_at,
                     r.pipeline_config,
                 )
             })
@@ -234,7 +193,7 @@ impl TagRepository for PostgresTagRepository {
     async fn find_enabled(&self) -> Result<Vec<Tag>, DomainError> {
         let rows = sqlx::query!(
             r#"
-            SELECT id, driver_type, driver_config, edge_agent_id,
+            SELECT id, device_id, source_config,
                    update_mode, update_config, value_type, value_schema,
                    enabled, description, metadata,
                    last_value, last_update, status, quality, error_message,
@@ -252,23 +211,10 @@ impl TagRepository for PostgresTagRepository {
             .map(|r| {
                 self.row_to_tag(
                     r.id,
-                    r.driver_type,
-                    r.driver_config,
-                    r.edge_agent_id,
-                    r.update_mode,
+                    r.device_id,
+                    r.source_config,
                     r.update_config,
                     r.value_type,
-                    r.value_schema,
-                    r.enabled,
-                    r.description,
-                    r.metadata,
-                    r.last_value,
-                    r.last_update,
-                    r.status,
-                    r.quality,
-                    r.error_message,
-                    r.created_at,
-                    r.updated_at,
                     r.pipeline_config,
                 )
             })
@@ -296,46 +242,14 @@ impl PostgresTagRepository {
     fn row_to_tag(
         &self,
         id: String,
-        driver_type: String,
-        driver_config: JsonValue,
-        edge_agent_id: String,
-        _update_mode: String,
+        device_id: String,
+        source_config: JsonValue,
         update_config: JsonValue,
         value_type: String,
-        value_schema: Option<JsonValue>,
-        enabled: bool,
-        description: Option<String>,
-        metadata: Option<JsonValue>,
-        last_value: Option<JsonValue>,
-        last_update: Option<OffsetDateTime>,
-        status: String,
-        quality: String,
-        error_message: Option<String>,
-        created_at: OffsetDateTime,
-        updated_at: OffsetDateTime,
         pipeline_config: Option<JsonValue>,
     ) -> Result<Tag, DomainError> {
-        // Helper to convert time::OffsetDateTime to chrono::DateTime<Utc>
-        let to_chrono = |dt: OffsetDateTime| -> DateTime<Utc> {
-            let timestamp = dt.unix_timestamp();
-            let nanos = dt.nanosecond();
-            DateTime::from_timestamp(timestamp, nanos).unwrap_or_default()
-        };
-
         // Parse enums and value objects
         let tag_id = TagId::new(id)?;
-
-        let driver_type = match driver_type.as_str() {
-            "RS232" => DriverType::RS232,
-            "Modbus" => DriverType::Modbus,
-            "OPC-UA" => DriverType::OPCUA,
-            "HTTP" => DriverType::HTTP,
-            _ => {
-                return Err(DomainError::InvalidConfiguration(
-                    "Unknown driver type".to_string(),
-                ));
-            }
-        };
 
         let update_mode: TagUpdateMode = serde_json::from_value(update_config)
             .map_err(|e| DomainError::InvalidConfiguration(e.to_string()))?;
@@ -344,74 +258,33 @@ impl PostgresTagRepository {
             "Simple" => TagValueType::Simple,
             "Composite" => TagValueType::Composite,
             _ => {
-                return Err(DomainError::InvalidConfiguration(
-                    "Unknown value type".to_string(),
-                ));
+                return Err(DomainError::InvalidConfiguration(format!(
+                    "Unknown value type: {}",
+                    value_type
+                )));
             }
         };
 
-        let tag_status = match status.as_str() {
-            "online" => TagStatus::Online,
-            "offline" => TagStatus::Offline,
-            "error" => TagStatus::Error,
-            "unknown" => TagStatus::Unknown,
-            _ => TagStatus::Unknown,
+        let pipeline_config = if let Some(config_json) = pipeline_config {
+            if !config_json.is_null() {
+                serde_json::from_value(config_json).map_err(|e| {
+                    DomainError::InvalidConfiguration(format!("Invalid pipeline config: {}", e))
+                })?
+            } else {
+                PipelineConfig::default()
+            }
+        } else {
+            PipelineConfig::default()
         };
 
-        let tag_quality = match quality.as_str() {
-            "good" => TagQuality::Good,
-            "bad" => TagQuality::Bad,
-            "uncertain" => TagQuality::Uncertain,
-            "timeout" => TagQuality::Timeout,
-            _ => TagQuality::Uncertain,
-        };
-
-        // Create tag with builder pattern
-        let mut tag = Tag::new(
+        // Create tag
+        Ok(Tag::new(
             tag_id,
-            driver_type,
-            driver_config,
-            edge_agent_id,
+            device_id,
+            source_config,
             update_mode,
             value_type,
-        );
-
-        // Set optional fields and runtime state
-        if let Some(schema) = value_schema {
-            tag.set_value_schema(schema);
-        }
-
-        if let Some(desc) = description {
-            tag.set_description(desc);
-        }
-
-        if let Some(meta) = metadata {
-            tag.set_metadata(meta);
-        }
-
-        if !enabled {
-            tag.disable();
-        }
-
-        if let Some(config_json) = pipeline_config {
-            if !config_json.is_null() {
-                let config: PipelineConfig = serde_json::from_value(config_json).map_err(|e| {
-                    DomainError::InvalidConfiguration(format!("Invalid pipeline config: {}", e))
-                })?;
-                tag.set_pipeline_config(config);
-            }
-        }
-
-        // Set runtime state using internal setters (need to add these to Tag)
-        tag.set_runtime_state(
-            last_value,
-            last_update.map(to_chrono),
-            tag_status,
-            tag_quality,
-            error_message,
-        );
-        tag.set_timestamps(to_chrono(created_at), to_chrono(updated_at));
-
-        Ok(tag)
+            pipeline_config,
+        ))
     }
 }

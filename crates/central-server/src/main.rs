@@ -299,11 +299,11 @@ async fn process_mqtt_message(state: &AppState, msg: MqttMessage) {
                     let timestamp_db = to_offset(tag_data.timestamp);
                     let val_db = val.clone(); // jsonb
 
-                    // Attempt 1: Standard Insert (Assumes tag exists)
+                    // Attempt 1: Standard Insert (Assumes tag exists in FK)
                     let query = sqlx::query!(
                         r#"
-                        INSERT INTO tag_events (tag_id, raw_tag_id, value, quality, timestamp)
-                        VALUES ($1, $1, $2, $3, $4)
+                        INSERT INTO tag_events (tag_id, value, quality, timestamp)
+                        VALUES ($1, $2, $3, $4)
                         "#,
                         tag_id,
                         val_db,
@@ -342,13 +342,12 @@ async fn process_mqtt_message(state: &AppState, msg: MqttMessage) {
                                 break;
                             }
 
-                            // Attempt 2: Fallback Insert (Late Binding)
+                            // Attempt 2: Fallback Insert (unregistered tag – NULL FK)
                             let query_fallback = sqlx::query!(
                                 r#"
-                                INSERT INTO tag_events (tag_id, raw_tag_id, value, quality, timestamp)
-                                VALUES (NULL, $1, $2, $3, $4)
+                                INSERT INTO tag_events (tag_id, value, quality, timestamp)
+                                VALUES (NULL, $1, $2, $3)
                                 "#,
-                                tag_id,
                                 val_db,
                                 q,
                                 timestamp_db
@@ -469,19 +468,19 @@ async fn process_report_message(state: &AppState, msg: MqttMessage) {
             })
             .sum();
 
-        // 1.1 Insert Report Summary (Idempotent to handle MQTT retries)
+        // 1.1 Insert Report Summary
+        // We use DO NOTHING; if report_id is already stored we skip.
         let res = sqlx::query!(
             r#"
-            INSERT INTO reports (report_id, agent_id, start_time, end_time, total_value)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (agent_id, report_id) DO NOTHING
+            INSERT INTO reports (id, report_id, agent_id, start_time, end_time, total_value)
+            VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
             RETURNING id
             "#,
             report.report_id,
             agent_id,
             to_offset(start_time),
             to_offset(end_time),
-            total_value
+            serde_json::json!(total_value)
         )
         .fetch_optional(&mut *tx)
         .await;
@@ -490,17 +489,16 @@ async fn process_report_message(state: &AppState, msg: MqttMessage) {
             Ok(Some(row)) => {
                 let db_report_id = row.id;
 
-                // 1.2 Insert Report Items
-                for (idx, item) in report.items.iter().enumerate() {
+                // 1.2 Insert Report Items (no tag_id FK – ReportItem has value, timestamp, metadata)
+                for item in report.items.iter() {
                     let _ = sqlx::query!(
                         r#"
-                        INSERT INTO report_items (report_id, data, timestamp, item_order)
-                        VALUES ($1, $2, $3, $4)
+                        INSERT INTO report_items (id, report_id, tag_id, value, timestamp)
+                        VALUES (gen_random_uuid(), $1, NULL, $2, $3)
                         "#,
                         db_report_id,
                         item.value,
-                        to_offset(item.timestamp),
-                        idx as i32
+                        to_offset(item.timestamp)
                     )
                     .execute(&mut *tx)
                     .await;

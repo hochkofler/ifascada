@@ -1,5 +1,5 @@
 use application::automation::AutomationEngine;
-use application::tag::ExecutorManager;
+use application::device::DeviceManager;
 use domain::tag::{Tag, TagId, TagRepository, TagUpdateMode, TagValueType};
 use infrastructure::config::{AgentConfig, TagConfig};
 use infrastructure::{MqttClient, MqttMessage};
@@ -8,16 +8,22 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::info;
 
+use domain::device::DeviceRepository;
+
 pub struct ConfigManager {
     mqtt_client: MqttClient,
     config_path: PathBuf,
     agent_id: String,
-    executor_manager: Arc<ExecutorManager>,
+    device_manager: Arc<DeviceManager>,
+    // executor_manager: Arc<ExecutorManager>, // Removed
     automation_engine: Arc<AutomationEngine>,
     tag_repository: Arc<dyn TagRepository + Send + Sync>,
+    device_repository: Arc<dyn DeviceRepository + Send + Sync>, // Added
     // Store the last processed payload hash/bytes to verify changes
     // Using Mutex because ConfigManager is shared/Send/Sync
     last_config_payload: Arc<tokio::sync::Mutex<Vec<u8>>>,
+    // Shared version for heartbeat
+    config_version: Arc<std::sync::RwLock<String>>, // NEW
 }
 
 impl ConfigManager {
@@ -25,18 +31,24 @@ impl ConfigManager {
         mqtt_client: MqttClient,
         config_path: PathBuf,
         agent_id: String,
-        executor_manager: Arc<ExecutorManager>,
+        device_manager: Arc<DeviceManager>,
+        // executor_manager: Arc<ExecutorManager>, // Removed
         automation_engine: Arc<AutomationEngine>,
         tag_repository: Arc<dyn TagRepository + Send + Sync>,
+        device_repository: Arc<dyn DeviceRepository + Send + Sync>, // Added
+        config_version: Arc<std::sync::RwLock<String>>,             // NEW
     ) -> Self {
         Self {
             mqtt_client,
             config_path,
             agent_id,
-            executor_manager,
+            device_manager,
+            // executor_manager,
             automation_engine,
             tag_repository,
+            device_repository,
             last_config_payload: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            config_version,
         }
     }
 
@@ -134,16 +146,44 @@ impl ConfigManager {
             }
         };
 
+        // Update Shared Version
+        {
+            let mut v = self.config_version.write().unwrap();
+            *v = config.version.clone();
+            info!("🔄 Config Version updated to: {}", *v);
+        }
+
         // Reload Automations
         self.automation_engine.reload(config.tags.clone()).await;
+
+        // Persist Devices to DB
+        let mut new_device_ids = std::collections::HashSet::new();
+        for device in &config.devices {
+            new_device_ids.insert(device.id.clone());
+            if let Err(e) = self.device_repository.save(device).await {
+                tracing::error!("Failed to save device {}: {}", device.id, e);
+            }
+        }
+
+        // Handle device deletions
+        if let Ok(existing_devices) = self.device_repository.find_by_agent(&self.agent_id).await {
+            for existing in existing_devices {
+                if !new_device_ids.contains(&existing.id) {
+                    info!("Removing deleted device: {}", existing.id);
+                    if let Err(e) = self.device_repository.delete(&existing.id).await {
+                        tracing::error!("Failed to delete device {}: {}", existing.id, e);
+                    }
+                }
+            }
+        }
 
         // Persist Tags to DB
         // TODO: Handle deletions (currently only upserts)
         // Strategy for deletion: get all tags for agent, find diff, delete missing.
         let mut new_tag_ids = std::collections::HashSet::new();
 
-        for tag_cfg in config.tags {
-            let tag = self.convert_config_to_tag(&tag_cfg);
+        for tag_cfg in &config.tags {
+            let tag = self.convert_config_to_tag(tag_cfg);
             new_tag_ids.insert(tag.id().clone());
             if let Err(e) = self.tag_repository.save(&tag).await {
                 tracing::error!("Failed to save tag {}: {}", tag.id(), e);
@@ -171,38 +211,50 @@ impl ConfigManager {
             }
         };
 
-        info!(
-            "Stopping {} active executors...",
-            self.executor_manager.active_count().await
-        );
-        self.executor_manager.stop_all().await;
+        // Load Domain Devices from Repo (ensure we have latest state)
+        let devices = match self.device_repository.find_by_agent(&self.agent_id).await {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!("Failed to load devices from new config: {}", e);
+                return;
+            }
+        };
 
-        info!("Starting {} new tags...", tags.len());
-        self.executor_manager.start_tags(tags).await;
+        info!("Stopping {} active devices...", "all"); // DeviceManager doesn't expose count yet easily
+        self.device_manager.stop_all().await;
+
+        if !devices.is_empty() {
+            info!("Starting {} devices...", devices.len());
+            self.device_manager.start_devices(devices, tags).await;
+        }
 
         info!("✅ Hot Reload Complete");
     }
 
     fn convert_config_to_tag(&self, cfg: &TagConfig) -> Tag {
+        let pipeline_config = cfg.pipeline.clone().unwrap_or_default();
+        let device_id = cfg
+            .device_id
+            .clone()
+            .expect("Device ID required for tags in V2 schema");
+
         let mut tag = Tag::new(
             TagId::new(&cfg.id).unwrap(),
-            cfg.driver.clone(), // Clone as needed, verify TagConfig struct
-            cfg.driver_config.clone(),
-            self.agent_id.clone(),
+            device_id,
+            cfg.driver_config
+                .clone()
+                .expect("Source Config (driver_config) required for tags"),
             cfg.update_mode
                 .clone()
                 .unwrap_or(TagUpdateMode::Polling { interval_ms: 1000 }),
             cfg.value_type.clone().unwrap_or(TagValueType::Simple),
+            pipeline_config,
         );
 
         if let Some(enabled) = cfg.enabled {
             if !enabled {
                 tag.disable();
             }
-        }
-
-        if let Some(pipeline) = &cfg.pipeline {
-            tag.set_pipeline_config(pipeline.clone());
         }
 
         tag

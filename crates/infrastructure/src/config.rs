@@ -1,5 +1,6 @@
 use config::{Config, ConfigError, Environment, File};
 use domain::automation::AutomationConfig;
+use domain::device::Device; // NEW
 use domain::driver::DriverType;
 use domain::tag::{TagUpdateMode, TagValueType};
 use serde::{Deserialize, Serialize};
@@ -38,8 +39,20 @@ fn default_printer_port() -> u16 {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TagConfig {
     pub id: String,
-    pub driver: DriverType,
-    pub driver_config: serde_json::Value,
+    // Optional: device_id if using new model, but keeping backward compat for now or transitioning?
+    // User wants full transition.
+    // New Tag struct has device_id.
+    // Old TagConfig had driver + driver_config inline.
+    // We should add `device_id` here and make `driver` optional (or deprecated).
+    // For now, let's add `device_id` as Option for migration.
+    pub device_id: Option<String>,
+
+    // Legacy fields (make optional if possible, or keep for now)
+    #[serde(default)]
+    pub driver: Option<DriverType>,
+    #[serde(default)]
+    pub driver_config: Option<serde_json::Value>,
+
     #[serde(default)]
     pub update_mode: Option<TagUpdateMode>,
     #[serde(default)]
@@ -55,10 +68,14 @@ pub struct TagConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AgentConfig {
+    #[serde(default)]
+    pub version: String, // NEW: Config Version (UUID)
     pub agent_id: String,
     pub mqtt: MqttConfig,
     #[serde(default)]
     pub printer: Option<PrinterConfig>,
+    #[serde(default)]
+    pub devices: Vec<Device>, // NEW: List of Devices
     #[serde(default)]
     pub tags: Vec<TagConfig>,
     #[serde(default = "default_heartbeat_interval")]

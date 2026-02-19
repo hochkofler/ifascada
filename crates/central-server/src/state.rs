@@ -235,18 +235,15 @@ impl AppState {
     }
 
     pub async fn load_agents_from_db(&self) -> Result<(), sqlx::Error> {
-        let rows = sqlx::query(
-            "SELECT id, status, heartbeat_interval_secs, missed_heartbeat_threshold FROM edge_agents",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        // V2: edge_agents has no heartbeat_interval_secs / missed_heartbeat_threshold columns
+        let rows = sqlx::query("SELECT id, status FROM edge_agents")
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut agents = self.agents.write().unwrap();
         for row in rows {
             let id: String = row.get("id");
             let status_db: Option<String> = row.get("status");
-            let interval: Option<i32> = row.get("heartbeat_interval_secs");
-            let threshold: Option<i32> = row.get("missed_heartbeat_threshold");
 
             let status = match status_db.as_deref().unwrap_or("unknown") {
                 "online" => AgentStatus::Online,
@@ -259,11 +256,11 @@ impl AppState {
                 AgentData {
                     id,
                     status,
-                    last_seen: chrono::Utc::now(), // Reset on load
+                    last_seen: chrono::Utc::now(),
                     metrics: None,
                     is_registered: true,
-                    heartbeat_interval_secs: interval.unwrap_or(30),
-                    missed_threshold: threshold.unwrap_or(2),
+                    heartbeat_interval_secs: 30, // Default: not stored in V2 schema
+                    missed_threshold: 2,         // Default: not stored in V2 schema
                 },
             );
         }
@@ -271,8 +268,13 @@ impl AppState {
     }
 
     pub async fn load_tags_from_db(&self) -> Result<(), sqlx::Error> {
+        // V2: edge_agent_id removed from tags — join devices to get agent_id
         let rows = sqlx::query(
-            "SELECT id, edge_agent_id, last_value, quality, status, last_update FROM tags",
+            r#"
+            SELECT t.id, d.edge_agent_id, t.last_value, t.quality, t.status, t.last_update
+            FROM tags t
+            JOIN devices d ON t.device_id = d.id
+            "#,
         )
         .fetch_all(&self.pool)
         .await?;

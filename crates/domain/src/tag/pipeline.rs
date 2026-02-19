@@ -40,15 +40,32 @@ pub enum ValidatorConfig {
     },
 }
 
+/// Types of scaling/transformations available
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum ScalingConfig {
+    /// Linear scaling: y = mx + b
+    Linear { slope: f64, intercept: f64 },
+    // Future: Formula, Map, etc.
+}
+
 /// Pipeline configuration for a Tag
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PipelineConfig {
     #[serde(default)]
     pub parser: Option<ParserConfig>,
     #[serde(default)]
+    pub scaling: Option<ScalingConfig>, // NEW
+    #[serde(default)]
     pub validators: Vec<ValidatorConfig>,
     #[serde(default)]
     pub automations: Vec<AutomationConfig>,
+}
+
+impl PipelineConfig {
+    pub fn linear(slope: f64, intercept: f64) -> ScalingConfig {
+        ScalingConfig::Linear { slope, intercept }
+    }
 }
 
 // Traits for implementation (to be used in Application/Infrastructure layer)

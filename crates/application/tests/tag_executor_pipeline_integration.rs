@@ -117,14 +117,14 @@ async fn test_executor_parses_scale_data() {
     // 2. Setup Tag with ScaleParser
     let mut tag = Tag::new(
         TagId::new("SCALE_01").unwrap(),
-        domain::driver::DriverType::RS232, // Type doesn't matter for this test as we inject driver instance
+        "device-scale".to_string(),
         json!({"port": "COM1"}),
-        "agent-1".to_string(),
         TagUpdateMode::OnChange {
             debounce_ms: 10,
             timeout_ms: 1000,
         }, // Low debounce for fast test
         TagValueType::Composite, // It will be object
+        domain::tag::PipelineConfig::default(),
     );
 
     // Configure pipeline

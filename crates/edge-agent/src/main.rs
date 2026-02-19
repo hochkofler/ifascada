@@ -6,7 +6,8 @@ use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use application::automation::AutomationEngine;
-use application::tag::ExecutorManager;
+use application::device::DeviceManager;
+use domain::device::DeviceRepository;
 use domain::event::EventPublisher;
 use domain::tag::TagRepository;
 use infrastructure::MqttClient;
@@ -141,7 +142,7 @@ async fn run() -> Result<()> {
         let backend = DbBackend::Sqlite;
         let schema = Schema::new(backend);
 
-        // 1. Create edge_agents table (Reference for tags)
+        // 1. Create edge_agents table (Reference for devices)
         let stmt_agent = schema
             .create_table_from_entity(edge_agents::Entity)
             .if_not_exists()
@@ -150,7 +151,16 @@ async fn run() -> Result<()> {
         db.execute(Statement::from_string(backend, sql_agent.to_string()))
             .await?;
 
-        // 2. Create tags table
+        // 2. Create devices table (FK to edge_agents, referenced by tags)
+        let stmt_devices = schema
+            .create_table_from_entity(infrastructure::database::entities::devices::Entity)
+            .if_not_exists()
+            .to_owned();
+        let sql_devices = stmt_devices.build(sea_orm::sea_query::SqliteQueryBuilder);
+        db.execute(Statement::from_string(backend, sql_devices.to_string()))
+            .await?;
+
+        // 3. Create tags table (FK to devices)
         let stmt_tags = schema
             .create_table_from_entity(tags::Entity)
             .if_not_exists()
@@ -194,6 +204,10 @@ async fn run() -> Result<()> {
     }
 
     let tag_repository = Arc::new(infrastructure::SeaOrmTagRepository::new(db.clone()));
+    let device_repository = Arc::new(infrastructure::SeaOrmDeviceRepository::new(
+        db.clone(),
+        agent_id.clone(),
+    ));
 
     // 4. Initialize Services (Buffered MQTT Publisher)
     let buffer_path = format!("sqlite://{}/{}_buffer.db?mode=rwc", data_dir, agent_id);
@@ -266,7 +280,20 @@ async fn run() -> Result<()> {
         action_executor.clone(),
     ));
 
-    // ... (existing import logic)
+    // Import Devices FIRST (tags have FK → devices, must exist before tags)
+    let existing_devices = device_repository.find_by_agent(&agent_id).await?;
+    if existing_devices.is_empty() && !config.devices.is_empty() {
+        info!(
+            "📥 Importing {} devices from initial config to DB...",
+            config.devices.len()
+        );
+        for device in &config.devices {
+            device_repository.save(device).await?;
+        }
+        info!("✅ Device Import complete");
+    }
+
+    // Import Tags second (after devices exist)
     let existing_tags = tag_repository.find_by_agent(&agent_id).await?;
     if existing_tags.is_empty() && !config.tags.is_empty() {
         info!(
@@ -277,9 +304,15 @@ async fn run() -> Result<()> {
             infrastructure::repositories::ConfigTagRepository::new(&agent_id, config.tags.clone());
         let initial_tags = temp_repo.find_all().await?;
         for tag in initial_tags {
-            tag_repository.save(&tag).await?;
+            if let Err(e) = tag_repository.save(&tag).await {
+                warn!(
+                    "Failed to import initial tag {}: {}. Skipping.",
+                    tag.id(),
+                    e
+                );
+            }
         }
-        info!("✅ Import complete");
+        info!("✅ Tag Import complete");
     }
 
     // Create Composite Publisher (MQTT + Automation)
@@ -288,17 +321,20 @@ async fn run() -> Result<()> {
         automation_engine.clone(),
     ]));
 
-    let executor_manager = Arc::new(ExecutorManager::new(
-        composite_publisher.clone(),
-        agent_id.clone(),
-    ));
+    // Device Manager (replaces ExecutorManager)
+    let device_manager = Arc::new(DeviceManager::new(composite_publisher.clone()));
 
-    // 5. Load Tags from Repo (Persistent Source)
+    // 5. Load Tags & Devices from Repo (Persistent Source)
     let tags = tag_repository.find_by_agent(&agent_id).await?;
-    info!("📋 Loaded {} tag(s) from storage", tags.len());
+    let devices = device_repository.find_by_agent(&agent_id).await?;
+    info!(
+        "📋 Loaded {} tag(s) and {} device(s) from storage",
+        tags.len(),
+        devices.len()
+    );
 
-    // 6. Start Executors
-    executor_manager.start_tags(tags).await;
+    // 6. Start Executors (Devices)
+    device_manager.start_devices(devices, tags).await;
 
     // 7. Start Command Listener
     let command_listener = application::CommandListener::new(
@@ -313,17 +349,25 @@ async fn run() -> Result<()> {
     });
 
     // 7.5 Start Config Manager (Remote Configuration)
+    // use application::device::DeviceManager; // Already imported at top
+
     let config_path = std::path::PathBuf::from(format!("{}/last_known.json", config_dir_path));
+
+    // Shared Config Version for Heartbeat
+    let config_version = Arc::new(std::sync::RwLock::new(config.version.clone()));
+
     let config_manager = edge_agent::config_manager::ConfigManager::new(
         mqtt_client.clone(),
         config_path,
         agent_id.clone(),
-        executor_manager.clone(),
+        device_manager.clone(), // NEW
+        // executor_manager.clone(), // Removed
         automation_engine.clone(),
         tag_repository.clone(),
+        device_repository.clone(), // Added
+        config_version.clone(),
     );
 
-    // Ensure we subscribe BEFORE coming ONLINE
     // Ensure we subscribe BEFORE coming ONLINE
     // We must capture the receiver here to avoid race conditions with retained messages
     let config_rx = match config_manager.init().await {
@@ -345,33 +389,27 @@ async fn run() -> Result<()> {
             warn!(
                 "ConfigManager started without initial receiver. Attempting to subscribe to internal channel anyway."
             );
-            // We can't easily get a stored mqtt_client from config_manager here without public access or method
-            // But run_loop signature changed.
-            // We should probably panic or handle this better.
-            // For now, let's assume if Init failed, we can't run loop properly without re-architecting to allow creating receiver later.
-            // But wait, run_loop takes rx. We can create one from the client if we had access to it.
-            // Actually ConfigManager owns mqtt_client.
-            // Let's change run_loop to take Option<Rx> or just handle it?
-            // No, let's keep it simple. If init failed, we probably don't run loop or we crash.
-            // But existing code just logged warn.
-            // Let's modify ConfigManager to have a method to get a new receiver if needed?
-            // Or just expose mqtt_client?
-            // Let's assume for now init succeeds or we are in trouble.
         }
     });
 
     // 8. Publish ONLINE status (After ConfigManager is listening)
     info!("✅ Agent Initialized. Publishing ONLINE status...");
-    let online_payload = serde_json::json!({ "status": "ONLINE" }).to_string();
+    let online_payload = serde_json::json!({
+        "status": "ONLINE",
+        "version": *config_version.read().unwrap()
+    })
+    .to_string();
+
     if let Err(e) = mqtt_client.publish(&lwt_topic, &online_payload, true).await {
         warn!("Failed to publish ONLINE status: {}", e);
     }
 
     // 9. Heartbeat Loop
     let heartbeat_agent_id = agent_id.clone();
-    let manager_arc = executor_manager.clone(); // executor_manager is already an Arc
+    let manager_arc = device_manager.clone();
     let heartbeat_manager = manager_arc.clone();
     let heartbeat_publisher = mqtt_publisher.clone();
+    let heartbeat_version_lock = config_version.clone();
 
     let heartbeat_interval = config.heartbeat_interval_secs;
     let heartbeat_handle = tokio::spawn(async move {
@@ -385,8 +423,11 @@ async fn run() -> Result<()> {
             let uptime = start_time.elapsed().as_secs();
             let active_tag_ids = heartbeat_manager.get_active_tag_ids().await;
 
+            let current_version = heartbeat_version_lock.read().unwrap().clone();
+
             let event = domain::event::DomainEvent::agent_heartbeat(
                 &heartbeat_agent_id,
+                &current_version,
                 uptime,
                 active_tag_ids,
             );
@@ -394,7 +435,7 @@ async fn run() -> Result<()> {
             if let Err(e) = heartbeat_publisher.publish(event).await {
                 warn!(error = %e, "Failed to publish heartbeat");
             } else {
-                info!("💓 Heartbeat sent");
+                info!("💓 Heartbeat sent (v{})", current_version);
             }
         }
     });

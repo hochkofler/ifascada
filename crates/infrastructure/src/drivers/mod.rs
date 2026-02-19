@@ -1,6 +1,8 @@
+pub mod device_simulator;
 pub mod modbus;
 mod rs232;
 mod simulator_connection;
+pub use device_simulator::SimulatorDeviceDriver;
 
 pub use modbus::{ModbusConfig, ModbusConnection};
 pub use rs232::{RS232Config, RS232Connection};
@@ -43,6 +45,25 @@ impl DriverFactory {
             DriverType::HTTP => Err(DomainError::InvalidDriverConfig(
                 "HTTP driver not yet implemented".to_string(),
             )),
+        }
+    }
+
+    /// Create a device driver (batch/optimized) from device and tags
+    pub fn create_device_driver(
+        device: domain::device::Device,
+        tags: Vec<domain::tag::Tag>,
+    ) -> Result<Box<dyn domain::driver::DeviceDriver>, DomainError> {
+        match device.driver {
+            DriverType::Simulator => {
+                // For simulator, we pass the device and tags
+                Ok(Box::new(SimulatorDeviceDriver::new(device, tags)))
+            }
+            DriverType::Modbus => Ok(Box::new(modbus::ModbusDeviceDriver::new(device, tags)?)),
+            DriverType::RS232 => Ok(Box::new(rs232::RS232DeviceDriver::new(device, tags)?)),
+            _ => Err(DomainError::InvalidDriverConfig(format!(
+                "DeviceDriver not yet implemented for {:?}",
+                device.driver
+            ))),
         }
     }
 }

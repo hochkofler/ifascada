@@ -44,16 +44,20 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
 async fn get_agents(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let agents = state.agents.read().unwrap();
+    // Note: is_registered will be true only for agents present in the edge_agents table.
+    // Agents created dynamically via heartbeats (ghosts) will have is_registered: false.
     let list: Vec<_> = agents.values().cloned().collect();
     Json(list)
 }
 
 async fn get_all_tags(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // tags.device_id -> devices.edge_agent_id gives us the agent
     let tags = sqlx::query!(
         r#"
-        SELECT id, edge_agent_id, last_value, quality, status, last_update 
-        FROM tags 
-        ORDER BY id ASC
+        SELECT t.id, d.edge_agent_id, t.last_value, t.quality, t.status, t.last_update
+        FROM tags t
+        JOIN devices d ON t.device_id = d.id
+        ORDER BY t.id ASC
         "#
     )
     .fetch_all(&state.pool)
@@ -183,9 +187,9 @@ async fn get_report_details(
         Ok(Some(r)) => {
             let items = sqlx::query!(
                 r#"
-                SELECT data, timestamp FROM report_items 
-                WHERE report_id = $1 
-                ORDER BY item_order ASC
+                SELECT value, timestamp FROM report_items
+                WHERE report_id = $1
+                ORDER BY timestamp ASC
                 "#,
                 id
             )
@@ -198,7 +202,7 @@ async fn get_report_details(
                         .iter()
                         .map(|i| {
                             json!({
-                                "value": i.data,
+                                "value": i.value,
                                 "timestamp": i.timestamp
                             })
                         })
@@ -226,6 +230,7 @@ async fn reprint_report(
     Path(id): Path<sqlx::types::Uuid>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
+    // Get report_id and agent via join with devices
     let report = sqlx::query!("SELECT report_id, agent_id FROM reports WHERE id = $1", id)
         .fetch_optional(&state.pool)
         .await;
@@ -259,11 +264,12 @@ async fn get_tag_history(
     let limit = pagination.limit.unwrap_or(30);
     let offset = pagination.offset.unwrap_or(0);
 
+    // The tag_events table uses tag_id (renamed from raw_tag_id) and created_at (added)
     let history = sqlx::query!(
         r#"
         SELECT id, value, quality, timestamp, created_at
         FROM tag_events
-        WHERE raw_tag_id = $1
+        WHERE tag_id = $1
         ORDER BY timestamp DESC
         LIMIT $2 OFFSET $3
         "#,
@@ -296,7 +302,7 @@ async fn get_tag_history(
 
 #[derive(serde::Deserialize)]
 struct BatchPrintRequest {
-    event_ids: Vec<i32>,
+    event_ids: Vec<i64>,
 }
 
 async fn batch_print_events(
@@ -307,12 +313,14 @@ async fn batch_print_events(
         return Json(json!({ "error": "No event IDs provided" }));
     }
 
-    // 1. Fetch events and their tag info
+    // Fetch events and join tags->devices to get edge_agent_id
+    // Use ! to force non-null if sqlx is over-cautious
     let events = sqlx::query!(
         r#"
-        SELECT e.value, e.timestamp, t.edge_agent_id, t.id as tag_id
+        SELECT e.value as "value!", e.timestamp, d.edge_agent_id, t.id as tag_id
         FROM tag_events e
-        JOIN tags t ON e.raw_tag_id = t.id
+        JOIN tags t ON e.tag_id = t.id
+        JOIN devices d ON t.device_id = d.id
         WHERE e.id = ANY($1)
         ORDER BY e.timestamp ASC
         "#,
@@ -330,19 +338,19 @@ async fn batch_print_events(
                 .iter()
                 .map(|r| {
                     let val = match &r.value {
-                        serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
-                        serde_json::Value::Object(map) => {
-                            map.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0)
+                        v if v.is_number() => v.as_f64().unwrap_or(0.0),
+                        v if v.is_object() => {
+                            v.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0)
                         }
                         _ => 0.0,
                     };
-                    let unit = match &r.value {
-                        serde_json::Value::Object(map) => map
-                            .get("unit")
+                    let unit = if let Some(obj) = r.value.as_object() {
+                        obj.get("unit")
                             .and_then(|v| v.as_str())
                             .unwrap_or("kg")
-                            .to_string(),
-                        _ => "kg".to_string(),
+                            .to_string()
+                    } else {
+                        "kg".to_string()
                     };
 
                     let ts_str = r

@@ -1,0 +1,6 @@
+-- Manually mark migrations as applied
+INSERT INTO _sqlx_migrations (version, description, installed_on, success, checksum, execution_time)
+VALUES 
+(20260219090000, 'initial schema v2', NOW(), true, '\x00000000000000000000000000000000', 0),
+(20260219090500, 'seed v2', NOW(), true, '\x00000000000000000000000000000000', 0)
+ON CONFLICT (version) DO NOTHING;

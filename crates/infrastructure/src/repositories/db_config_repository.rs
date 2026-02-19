@@ -1,5 +1,6 @@
 use crate::config::{AgentConfig, MqttConfig, TagConfig};
 use anyhow::{Result, anyhow};
+use domain::device::Device;
 use domain::driver::DriverType;
 use domain::tag::{TagUpdateMode, TagValueType};
 use sqlx::{PgPool, Row};
@@ -15,71 +16,73 @@ impl DbConfigRepository {
     }
 
     pub async fn get_agent_config(&self, agent_id: &str) -> Result<AgentConfig> {
-        // 1. Check if agent exists and get policy
-        let agent_row = sqlx::query(
-            "SELECT id, heartbeat_interval_secs, printer_config FROM edge_agents WHERE id = $1",
-        )
-        .bind(agent_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        // 1. Check if agent exists (V2 edge_agents has no heartbeat_interval_secs or printer_config)
+        let agent_row = sqlx::query("SELECT id FROM edge_agents WHERE id = $1")
+            .bind(agent_id)
+            .fetch_optional(&self.pool)
+            .await?;
 
-        let agent_row = match agent_row {
+        let _agent_row = match agent_row {
             Some(row) => row,
             None => return Err(anyhow!("Agent {} not found", agent_id)),
         };
 
-        let heartbeat_interval_secs: i32 = agent_row.get(1);
-        let printer_config_json: Option<serde_json::Value> = agent_row.get(2);
+        // Defaults for fields no longer persisted in the DB
+        let heartbeat_interval_secs: i64 = 30;
+        let printer_config_json: Option<serde_json::Value> = None;
 
-        // 2. Fetch tags
-        let rows = sqlx::query(
+        // 2. Fetch Devices (V2: driver_type column, name required)
+        let device_rows = sqlx::query(
+            "SELECT id, driver_type, connection_config, enabled FROM devices WHERE edge_agent_id = $1",
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let devices: Vec<Device> = device_rows
+            .into_iter()
+            .map(|row| {
+                let driver_str: String = row.get("driver_type");
+                let driver = serde_json::from_value(serde_json::json!(driver_str))
+                    .unwrap_or(DriverType::Simulator);
+
+                Device {
+                    id: row.get("id"),
+                    driver,
+                    connection_config: row.get("connection_config"),
+                    enabled: row.get("enabled"),
+                }
+            })
+            .collect();
+
+        // 3. Fetch Tags (via Join on Devices)
+        let tag_rows = sqlx::query(
             r#"
             SELECT 
-                id, 
-                driver_type, 
-                driver_config, 
-                update_mode, 
-                update_config, 
-                value_type, 
-                value_schema,
-                enabled,
-                pipeline_config
-            FROM tags 
-            WHERE edge_agent_id = $1
+                t.id, 
+                t.device_id,
+                t.source_config, 
+                t.update_mode, 
+                t.update_config, 
+                t.value_type, 
+                t.value_schema,
+                t.enabled,
+                t.pipeline_config
+            FROM tags t
+            JOIN devices d ON t.device_id = d.id
+            WHERE d.edge_agent_id = $1
             "#,
         )
         .bind(agent_id)
         .fetch_all(&self.pool)
         .await?;
 
-        let total_rows = rows.len();
-
-        let tags: Vec<TagConfig> = rows
+        let tags: Vec<TagConfig> = tag_rows
             .into_iter()
-            .filter_map(|row| {
+            .map(|row| {
                 let id: String = row.get("id");
-                let driver_type_str: String = row.get("driver_type");
-                
-                // Robust DriverType parsing
-                let driver = match serde_json::from_value::<DriverType>(serde_json::json!(driver_type_str)) {
-                    Ok(d) => d,
-                    Err(_) => {
-                        // Attempt Case-Insensitive fallback
-                        match driver_type_str.to_lowercase().as_str() {
-                            "rs232" => DriverType::RS232,
-                            "modbus" => DriverType::Modbus,
-                            "opc-ua" | "opcua" => DriverType::OPCUA,
-                            "http" => DriverType::HTTP,
-                            "simulator" => DriverType::Simulator,
-                            _ => {
-                                tracing::warn!("⚠️ Invalid DriverType '{}' for tag {}. Skipping tag.", driver_type_str, id);
-                                return None;
-                            }
-                        }
-                    }
-                };
-
-                let driver_config: serde_json::Value = row.get("driver_config");
+                let device_id: String = row.get("device_id");
+                let source_config: serde_json::Value = row.get("source_config");
 
                 let update_mode_str: String = row.get("update_mode");
                 let update_config: serde_json::Value = row.get("update_config");
@@ -104,6 +107,7 @@ impl DbConfigRepository {
                             .get("timeout_ms")
                             .and_then(|v| v.as_u64())
                             .unwrap_or(0);
+
                         Some(TagUpdateMode::OnChange {
                             debounce_ms: debounce,
                             timeout_ms: timeout,
@@ -123,68 +127,40 @@ impl DbConfigRepository {
                             change_threshold: threshold,
                         })
                     }
-                    _ => {
-                        tracing::warn!("⚠️ Unknown UpdateMode '{}' for tag {}. Defaulting to None.", update_mode_str, id);
-                        None
-                    },
+                    _ => None,
                 };
 
-                let value_type_str: String = row.get("value_type");
-                let value_type = match value_type_str.to_lowercase().as_str() {
-                    "composite" => Some(TagValueType::Composite),
-                    "simple" => Some(TagValueType::Simple),
-                    _ => Some(TagValueType::Simple),
-                };
-
-                let enabled: bool = row.get("enabled");
-                let pipeline_config: Option<serde_json::Value> = row.get("pipeline_config");
-
-                let pipeline: Option<domain::tag::PipelineConfig> =
-                    if let Some(json) = pipeline_config {
-                         match serde_json::from_value(json) {
-                            Ok(p) => Some(p),
-                            Err(e) => {
-                                tracing::warn!("⚠️ Metadata Error: Failed to parse pipeline config for tag {}: {}. Pipeline disabled.", id, e);
-                                None
-                            }
-                        }
-                    } else {
-                        None
-                    };
-
-                let value_schema: Option<serde_json::Value> = row.get("value_schema");
-
-                let automations = pipeline
-                    .as_ref()
-                    .map(|p| p.automations.clone())
-                    .unwrap_or_default();
-
-                Some(TagConfig {
+                TagConfig {
                     id,
-                    driver,
-                    driver_config,
+                    device_id: Some(device_id),
+                    driver: None,
+                    driver_config: Some(source_config),
                     update_mode,
-                    value_type,
-                    value_schema,
-                    enabled: Some(enabled),
-                    pipeline,
-                    automations,
-                })
+                    value_type: Some(match row.get::<String, _>("value_type").as_str() {
+                        "Simple" => TagValueType::Simple,
+                        "Composite" => TagValueType::Composite,
+                        _ => TagValueType::Simple,
+                    }),
+                    value_schema: row.get("value_schema"),
+                    enabled: Some(row.get("enabled")),
+                    pipeline: row
+                        .get::<Option<serde_json::Value>, _>("pipeline_config")
+                        .and_then(|v| serde_json::from_value(v).ok()),
+                    automations: vec![],
+                }
             })
             .collect();
 
-        // 3. Log summary
-        tracing::info!("Loaded {}/{} tags for agent {}", tags.len(), total_rows, agent_id);
-
         Ok(AgentConfig {
+            version: uuid::Uuid::new_v4().to_string(),
             agent_id: agent_id.to_string(),
-            // Mock MQTT config for now, as it's not in DB yet
             mqtt: MqttConfig {
                 host: "localhost".to_string(),
                 port: 1883,
                 status_topic: None,
             },
             printer: printer_config_json.and_then(|v| serde_json::from_value(v).ok()),
+            devices,
             tags,
             heartbeat_interval_secs: heartbeat_interval_secs as u64,
         })

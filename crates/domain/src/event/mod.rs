@@ -35,6 +35,7 @@ pub enum DomainEvent {
     AgentHeartbeat {
         agent_id: String,
         uptime_secs: u64,
+        config_version: String, // NEW
         active_tags: usize,
         active_tag_ids: Vec<String>,
         timestamp: DateTime<Utc>,
@@ -104,12 +105,14 @@ impl DomainEvent {
     /// Create an AgentHeartbeat event
     pub fn agent_heartbeat(
         agent_id: impl Into<String>,
+        config_version: impl Into<String>, // NEW
         uptime_secs: u64,
         active_tag_ids: Vec<String>,
     ) -> Self {
         let active_tags = active_tag_ids.len();
         Self::AgentHeartbeat {
             agent_id: agent_id.into(),
+            config_version: config_version.into(),
             uptime_secs,
             active_tags,
             active_tag_ids,
@@ -196,6 +199,7 @@ mod tests {
     fn test_agent_heartbeat_event() {
         let event = DomainEvent::agent_heartbeat(
             "agent-1",
+            "v1.0.0", // config_version
             300,
             vec!["tag-1".to_string(), "tag-2".to_string()],
         );
@@ -204,12 +208,14 @@ mod tests {
         match event {
             DomainEvent::AgentHeartbeat {
                 agent_id,
+                config_version,
                 uptime_secs,
                 active_tags,
                 active_tag_ids,
                 ..
             } => {
                 assert_eq!(agent_id, "agent-1");
+                assert_eq!(config_version, "v1.0.0");
                 assert_eq!(uptime_secs, 300);
                 assert_eq!(active_tags, 2);
                 assert_eq!(active_tag_ids, vec!["tag-1", "tag-2"]);

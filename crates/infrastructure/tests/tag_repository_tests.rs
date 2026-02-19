@@ -9,7 +9,6 @@
 //! cargo test --test tag_repository_tests
 //! ```
 
-use domain::driver::DriverType;
 use domain::tag::TagRepository;
 use domain::tag::{ParserConfig, PipelineConfig, TagUpdateMode, TagValueType, ValidatorConfig};
 use domain::{Tag, TagId};
@@ -45,27 +44,58 @@ async fn setup_test_edge_agent(pool: &PgPool, agent_id: &str) {
     .expect("Failed to setup test edge agent");
 }
 
+/// Setup test device (required for foreign key)
+async fn setup_test_device(pool: &PgPool, agent_id: &str, device_id: &str) {
+    sqlx::query!(
+        r#"
+        INSERT INTO devices (id, edge_agent_id, name, driver_type, connection_config, enabled, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        ON CONFLICT (id) DO NOTHING
+        "#,
+        device_id,
+        agent_id,
+        "Test Device",
+        "ModbusTCP",
+        json!({"ip": "127.0.0.1", "port": 502}),
+        true
+    )
+    .execute(pool)
+    .await
+    .expect("Failed to setup test device");
+}
+
 /// Helper to clean up test data with a specific prefix
 async fn cleanup_test_data(pool: &PgPool, prefix: &str) {
     let pattern = format!("{}%", prefix);
     sqlx::query!("DELETE FROM tags WHERE id LIKE $1", pattern)
         .execute(pool)
         .await
-        .expect("Failed to cleanup test data");
+        .expect("Failed to cleanup test tags");
+
+    // Also cleanup devices if they match the prefix-based ID pattern?
+    // In tests we currently use "test-agent-..." which is not prefix based on tag prefix.
+    // But devices usually have IDs like "device-1".
+    // Let's assume devices are unique enough or cleaned up by cascade if agent is deleted?
+    // But we don't delete agent usually in cleanup_test_data (it deletes "FROM tags").
+    // Let's add delete from devices where ID like pattern?
+    // But device IDs in tests below might be simple "device-1".
+    // I will manually cleanup devices in the test if needed, or rely on distinct IDs.
+    // Actually, `create_test_tag` takes `agent_id`.
+    // I should make device_id unique per test helper.
 }
 
 /// Helper to create a test tag
-fn create_test_tag(id: &str, agent_id: &str) -> Tag {
+fn create_test_tag(id: &str, device_id: &str) -> Tag {
     Tag::new(
         TagId::new(id).unwrap(),
-        DriverType::RS232,
+        device_id.to_string(),
         json!({"port": "COM3", "baud_rate": 9600}),
-        agent_id.to_string(),
         TagUpdateMode::OnChange {
             debounce_ms: 100,
             timeout_ms: 30000,
         },
         TagValueType::Composite,
+        PipelineConfig::default(),
     )
 }
 
@@ -73,13 +103,15 @@ fn create_test_tag(id: &str, agent_id: &str) -> Tag {
 async fn test_save_and_find_tag() {
     let pool = create_test_pool().await;
     let agent_id = "test-agent-save";
+    let device_id = "test-device-save";
     let prefix = "TEST_SAVE_";
     setup_test_edge_agent(&pool, agent_id).await;
+    setup_test_device(&pool, agent_id, device_id).await;
     cleanup_test_data(&pool, prefix).await;
 
     let repo = PostgresTagRepository::new(pool.clone());
     let tag_id = format!("{}TAG_1", prefix);
-    let tag = create_test_tag(&tag_id, agent_id);
+    let tag = create_test_tag(&tag_id, device_id);
 
     // Save tag
     repo.save(&tag).await.expect("Failed to save tag");
@@ -111,8 +143,10 @@ async fn test_find_nonexistent_tag() {
 async fn test_find_by_agent() {
     let pool = create_test_pool().await;
     let agent_id = "test-agent-find";
+    let device_id = "test-device-find";
     let prefix = "TEST_FIND_AGENT_";
     setup_test_edge_agent(&pool, agent_id).await;
+    setup_test_device(&pool, agent_id, device_id).await;
     cleanup_test_data(&pool, prefix).await;
 
     let repo = PostgresTagRepository::new(pool.clone());
@@ -120,8 +154,8 @@ async fn test_find_by_agent() {
     // Create tags for different agents
     let tag1_id = format!("{}TAG_1", prefix);
     let tag2_id = format!("{}TAG_2", prefix);
-    let tag1 = create_test_tag(&tag1_id, agent_id);
-    let tag2 = create_test_tag(&tag2_id, agent_id);
+    let tag1 = create_test_tag(&tag1_id, device_id);
+    let tag2 = create_test_tag(&tag2_id, device_id);
 
     repo.save(&tag1).await.expect("Failed to save tag1");
     repo.save(&tag2).await.expect("Failed to save tag2");
@@ -147,13 +181,15 @@ async fn test_find_by_agent() {
 async fn test_delete_tag() {
     let pool = create_test_pool().await;
     let agent_id = "test-agent-delete";
+    let device_id = "test-device-delete";
     let prefix = "TEST_DELETE_";
     setup_test_edge_agent(&pool, agent_id).await;
+    setup_test_device(&pool, agent_id, device_id).await;
     cleanup_test_data(&pool, prefix).await;
 
     let repo = PostgresTagRepository::new(pool.clone());
     let tag_id = format!("{}TAG", prefix);
-    let tag = create_test_tag(&tag_id, agent_id);
+    let tag = create_test_tag(&tag_id, device_id);
 
     // Save and verify exists
     repo.save(&tag).await.expect("Failed to save tag");
@@ -172,8 +208,10 @@ async fn test_delete_tag() {
 async fn test_find_enabled_tags() {
     let pool = create_test_pool().await;
     let agent_id = "test-agent-enabled";
+    let device_id = "test-device-enabled";
     let prefix = "TEST_ENABLED_";
     setup_test_edge_agent(&pool, agent_id).await;
+    setup_test_device(&pool, agent_id, device_id).await;
     // Clean up specifically for this test's unique tags
     cleanup_test_data(&pool, prefix).await;
 
@@ -182,8 +220,8 @@ async fn test_find_enabled_tags() {
     let tag1_id = format!("{}TAG_VISIBLE", prefix);
     let tag2_id = format!("{}TAG_HIDDEN", prefix);
 
-    let tag1 = create_test_tag(&tag1_id, agent_id);
-    let mut tag2 = create_test_tag(&tag2_id, agent_id);
+    let tag1 = create_test_tag(&tag1_id, device_id);
+    let mut tag2 = create_test_tag(&tag2_id, device_id);
     tag2.disable();
 
     repo.save(&tag1).await.expect("Failed to save tag1");
@@ -202,13 +240,15 @@ async fn test_find_enabled_tags() {
 async fn test_save_and_load_pipeline_config() {
     let pool = create_test_pool().await;
     let agent_id = "test-agent-pipeline";
+    let device_id = "test-device-pipeline";
     let prefix = "TEST_PIPELINE_";
     setup_test_edge_agent(&pool, agent_id).await;
+    setup_test_device(&pool, agent_id, device_id).await;
     cleanup_test_data(&pool, prefix).await;
 
     let repo = PostgresTagRepository::new(pool.clone());
     let tag_id = format!("{}TAG", prefix);
-    let mut tag = create_test_tag(&tag_id, agent_id);
+    let mut tag = create_test_tag(&tag_id, device_id);
 
     // Configure pipeline with ScaleParser and RangeValidator
     let mut pipeline = PipelineConfig::default();

@@ -11,6 +11,10 @@ use tokio_modbus::client::Context;
 use tokio_modbus::prelude::*;
 use tokio_serial::SerialStream;
 
+use domain::device::Device;
+use domain::driver::DeviceDriver;
+use domain::tag::Tag;
+
 // Global registry for shared serial ports
 static SHARED_PORTS: std::sync::OnceLock<Mutex<HashMap<String, Weak<TokioMutex<Context>>>>> =
     std::sync::OnceLock::new();
@@ -403,5 +407,272 @@ impl DriverConnection for ModbusConnection {
 
     fn driver_type(&self) -> &str {
         "Modbus"
+    }
+}
+
+/// New V2 Device Configuration (Connection Only)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModbusDeviceConfig {
+    pub port: String,
+    #[serde(default = "default_baud_rate")]
+    pub baud_rate: u32,
+    #[serde(default = "default_data_bits")]
+    pub data_bits: u8,
+    #[serde(default = "default_parity")]
+    pub parity: String,
+    #[serde(default = "default_stop_bits")]
+    pub stop_bits: u8,
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
+    pub slave_id: u8,
+}
+
+impl ModbusDeviceConfig {
+    pub fn to_data_bits(&self) -> Result<tokio_serial::DataBits, DomainError> {
+        match self.data_bits {
+            5 => Ok(tokio_serial::DataBits::Five),
+            6 => Ok(tokio_serial::DataBits::Six),
+            7 => Ok(tokio_serial::DataBits::Seven),
+            8 => Ok(tokio_serial::DataBits::Eight),
+            _ => Err(DomainError::InvalidDriverConfig(format!(
+                "Invalid data bits: {}",
+                self.data_bits
+            ))),
+        }
+    }
+
+    pub fn to_parity(&self) -> Result<tokio_serial::Parity, DomainError> {
+        match self.parity.to_lowercase().as_str() {
+            "n" | "none" => Ok(tokio_serial::Parity::None),
+            "o" | "odd" => Ok(tokio_serial::Parity::Odd),
+            "e" | "even" => Ok(tokio_serial::Parity::Even),
+            _ => Err(DomainError::InvalidDriverConfig(format!(
+                "Invalid parity: {}",
+                self.parity
+            ))),
+        }
+    }
+
+    pub fn to_stop_bits(&self) -> Result<tokio_serial::StopBits, DomainError> {
+        match self.stop_bits {
+            1 => Ok(tokio_serial::StopBits::One),
+            2 => Ok(tokio_serial::StopBits::Two),
+            _ => Err(DomainError::InvalidDriverConfig(format!(
+                "Invalid stop bits: {}",
+                self.stop_bits
+            ))),
+        }
+    }
+}
+
+/// Device Driver Implementation for Modbus (Batch Polling)
+pub struct ModbusDeviceDriver {
+    config: ModbusDeviceConfig,
+    tags: Vec<Tag>,
+    context: Option<Arc<TokioMutex<Context>>>,
+    state: ConnectionState,
+}
+
+impl ModbusDeviceDriver {
+    pub fn new(device: Device, tags: Vec<Tag>) -> Result<Self, DomainError> {
+        // Parse connection config
+        let config: ModbusDeviceConfig =
+            serde_json::from_value(device.connection_config).map_err(|e| {
+                DomainError::InvalidDriverConfig(format!("Invalid Modbus Config: {}", e))
+            })?;
+
+        Ok(Self {
+            config,
+            tags,
+            context: None,
+            state: ConnectionState::Disconnected,
+        })
+    }
+}
+
+#[async_trait]
+impl DeviceDriver for ModbusDeviceDriver {
+    async fn connect(&mut self) -> Result<(), DomainError> {
+        self.state = ConnectionState::Connecting;
+        let map_mutex = get_shared_ports();
+        let port_key = self.config.port.to_lowercase();
+
+        // 1. Try to get existing context
+        let existing_ctx = {
+            let map = map_mutex.lock().unwrap();
+            if let Some(weak) = map.get(&port_key) {
+                weak.upgrade()
+            } else {
+                None
+            }
+        };
+
+        if let Some(ctx) = existing_ctx {
+            self.context = Some(ctx);
+            self.state = ConnectionState::Connected;
+            return Ok(());
+        }
+
+        // 2. Create new context
+        let port_name = if cfg!(target_os = "windows") && !self.config.port.starts_with(r"\\.\") {
+            format!(r"\\.\{}", self.config.port)
+        } else {
+            self.config.port.clone()
+        };
+
+        let builder = tokio_serial::new(&port_name, self.config.baud_rate)
+            .data_bits(self.config.to_data_bits()?)
+            .parity(self.config.to_parity()?)
+            .stop_bits(self.config.to_stop_bits()?)
+            .timeout(Duration::from_millis(self.config.timeout_ms));
+
+        let port = SerialStream::open(&builder).map_err(|e| {
+            self.state = ConnectionState::Failed;
+            let err_msg = format!("Failed to open serial port {}: {}", port_name, e);
+            tracing::error!("{}", err_msg);
+            DomainError::DriverError(err_msg)
+        })?;
+
+        // We use slave ID 1 initially as default to attach, but will switch per request
+        let ctx = tokio_modbus::client::rtu::attach_slave(port, Slave(self.config.slave_id));
+        let ctx = Arc::new(TokioMutex::new(ctx));
+
+        // 3. Store in map
+        {
+            let mut map = map_mutex.lock().unwrap();
+            map.insert(port_key, Arc::downgrade(&ctx));
+        }
+
+        self.context = Some(ctx);
+        self.state = ConnectionState::Connected;
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> Result<(), DomainError> {
+        self.context = None;
+        self.state = ConnectionState::Disconnected;
+        Ok(())
+    }
+
+    fn is_connected(&self) -> bool {
+        self.context.is_some()
+    }
+
+    fn connection_state(&self) -> ConnectionState {
+        self.state
+    }
+
+    async fn poll(
+        &mut self,
+    ) -> Result<Vec<(domain::tag::TagId, Result<serde_json::Value, DomainError>)>, DomainError>
+    {
+        let ctx_arc = self
+            .context
+            .as_ref()
+            .ok_or(DomainError::DriverError("Not connected".into()))?;
+
+        let mut results = Vec::new();
+        let mut ctx = ctx_arc.lock().await;
+
+        // Ensure we are talking to the correct slave (Device-level)
+        ctx.set_slave(Slave(self.config.slave_id));
+
+        // Todo: Group tags by contiguity for optimization?
+        // For now, iterate and read individually.
+        for tag in &self.tags {
+            // Parse Source Config
+            // Expected: {"register": u16, "count": u16, "register_type": "Holding"|"Input"|...}
+            let source_config = tag.source_config(); // This returns &Value
+
+            let register_addr = source_config
+                .get("register")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u16);
+            let count = source_config
+                .get("count")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u16)
+                .unwrap_or(1);
+            let register_type = source_config
+                .get("register_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Holding");
+
+            if let Some(addr) = register_addr {
+                let read_res: Result<serde_json::Value, DomainError> = match register_type {
+                    "Holding" => match ctx.read_holding_registers(addr, count).await {
+                        Ok(inner) => match inner {
+                            Ok(vals) => Ok(serde_json::json!(vals)),
+                            Err(e) => {
+                                Err(DomainError::DriverError(format!("Modbus Exception: {}", e)))
+                            }
+                        },
+                        Err(e) => Err(DomainError::DriverError(format!(
+                            "Modbus Transport Error: {}",
+                            e
+                        ))),
+                    },
+                    "Input" => match ctx.read_input_registers(addr, count).await {
+                        Ok(inner) => match inner {
+                            Ok(vals) => Ok(serde_json::json!(vals)),
+                            Err(e) => {
+                                Err(DomainError::DriverError(format!("Modbus Exception: {}", e)))
+                            }
+                        },
+                        Err(e) => Err(DomainError::DriverError(format!(
+                            "Modbus Transport Error: {}",
+                            e
+                        ))),
+                    },
+                    "Coil" => match ctx.read_coils(addr, count).await {
+                        Ok(inner) => match inner {
+                            Ok(vals) => Ok(serde_json::json!(vals)),
+                            Err(e) => {
+                                Err(DomainError::DriverError(format!("Modbus Exception: {}", e)))
+                            }
+                        },
+                        Err(e) => Err(DomainError::DriverError(format!(
+                            "Modbus Transport Error: {}",
+                            e
+                        ))),
+                    },
+                    "Discrete" => match ctx.read_discrete_inputs(addr, count).await {
+                        Ok(inner) => match inner {
+                            Ok(vals) => Ok(serde_json::json!(vals)),
+                            Err(e) => {
+                                Err(DomainError::DriverError(format!("Modbus Exception: {}", e)))
+                            }
+                        },
+                        Err(e) => Err(DomainError::DriverError(format!(
+                            "Modbus Transport Error: {}",
+                            e
+                        ))),
+                    },
+                    _ => Err(DomainError::DriverError(format!(
+                        "Unknown register type: {}",
+                        register_type
+                    ))),
+                };
+
+                results.push((tag.id().clone(), read_res));
+            } else {
+                results.push((
+                    tag.id().clone(),
+                    Err(DomainError::InvalidDriverConfig(
+                        "Missing 'register' in source_config".into(),
+                    )),
+                ));
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn write(
+        &mut self,
+        _tag_id: &domain::tag::TagId,
+        _value: serde_json::Value,
+    ) -> Result<(), DomainError> {
+        Err(DomainError::DriverError("Write not implemented yet".into()))
     }
 }

@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use tokio::time::{interval, sleep};
 
 use domain::driver::DriverConnection;
-use domain::tag::TagUpdateMode;
+use domain::tag::{ScalingConfig, TagUpdateMode};
 use domain::{DomainEvent, Tag, TagId, TagQuality};
 
 use domain::event::EventPublisher;
@@ -22,6 +22,7 @@ pub struct TagExecutor {
     event_publisher: Arc<dyn EventPublisher>,
     parser: Option<Box<dyn ValueParser>>,
     validators: Vec<Box<dyn ValueValidator>>,
+    scaling: Option<ScalingConfig>, // NEW
     reconnect_attempts: u32,
     cancel_token: CancellationToken,
     connected_registry: Arc<Mutex<HashSet<TagId>>>,
@@ -36,7 +37,12 @@ impl TagExecutor {
         cancel_token: CancellationToken,
         connected_registry: Arc<Mutex<HashSet<TagId>>>,
     ) -> Self {
-        let pipeline_config = tag.pipeline_config();
+        let pipeline_config = tag.pipeline_config().clone();
+        let scaling = pipeline_config.scaling.clone();
+
+        if scaling.is_some() {
+            tracing::info!(tag_id = %tag.id(), "Executor initialized with scaling config");
+        }
 
         let parser = if let Some(config) = &pipeline_config.parser {
             match PipelineFactory::create_parser(config) {
@@ -64,6 +70,7 @@ impl TagExecutor {
             event_publisher,
             parser,
             validators,
+            scaling, // pre-extracted above
             reconnect_attempts: 0,
             cancel_token,
             connected_registry,
@@ -288,7 +295,9 @@ impl TagExecutor {
     async fn read_and_publish(&mut self) -> Result<()> {
         match self.driver.read_value().await? {
             Some(raw_value) => {
+                tracing::info!(tag_id = %self.tag.id(), raw = %raw_value, "Reading from driver");
                 if let Some(value) = self.process_value(raw_value)? {
+                    tracing::info!(tag_id = %self.tag.id(), processed = %value, "Value processed");
                     self.tag.update_value(value.clone(), TagQuality::Good);
 
                     let event = DomainEvent::tag_value_updated(
@@ -433,12 +442,46 @@ impl TagExecutor {
                     parsed_value,
                     e
                 );
-                // If validation fails, discard.
                 return Ok(None);
             }
         }
 
-        Ok(Some(parsed_value))
+        // 3. Scaling (y = x * slope + intercept)
+        let scaled_value = if let Some(ScalingConfig::Linear { slope, intercept }) = &self.scaling {
+            // Try to get numeric value, also checking for single-element arrays (common in Modbus)
+            let val_to_scale = if let Some(num) = parsed_value.as_f64() {
+                Some(num)
+            } else if let Some(arr) = parsed_value.as_array() {
+                if arr.len() == 1 {
+                    arr[0].as_f64()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some(num) = val_to_scale {
+                let result = num * slope + intercept;
+                tracing::info!(tag_id = %self.tag.id(), input = %num, slope = %slope, intercept = %intercept, result = %result, "Linear scaling applied");
+                serde_json::json!(result)
+            } else {
+                tracing::warn!(
+                    "Scaling configured for tag {} but value is not numeric or single-element array: {}",
+                    self.tag.id(),
+                    parsed_value
+                );
+                parsed_value
+            }
+        } else {
+            if self.tag.id().as_str() == "Temp" || self.tag.id().as_str() == "Humedad" {
+                tracing::debug!(tag_id = %self.tag.id(), "Scaling NOT applied (no config found in executor)");
+            }
+            parsed_value
+        };
+
+        tracing::info!(tag_id = %self.tag.id(), final_value = %scaled_value, "Pipeline processing complete");
+        Ok(Some(scaled_value))
     }
 }
 
@@ -545,17 +588,17 @@ mod tests {
     }
 
     fn create_test_tag() -> Tag {
-        use domain::driver::DriverType;
+        use domain::tag::PipelineConfig;
         Tag::new(
             TagId::new("TEST_TAG").unwrap(),
-            DriverType::RS232,
+            "device-1".to_string(),
             json!({"port": "COM3"}),
-            "agent-1".to_string(),
             TagUpdateMode::OnChange {
                 debounce_ms: 100,
                 timeout_ms: 30000,
             },
             TagValueType::Simple,
+            PipelineConfig::default(),
         )
     }
 
