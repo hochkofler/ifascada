@@ -1,0 +1,23 @@
+[package]
+name = "application"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+domain = { path = "../domain" }
+infrastructure = { path = "../infrastructure" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.8", features = ["v4"] }
+
+[dev-dependencies]
+domain = { path = "../domain" }
+tokio = { workspace = true, features = ["full", "test-util"] }
+serde_json = { workspace = true }
+async-trait = { workspace = true }

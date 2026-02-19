@@ -1,0 +1,76 @@
+1770916813: mosquitto version 2.1.2 starting
+1770916813: Config loaded from /mosquitto/config/mosquitto.conf.
+1770916813: Bridge support available.
+1770916813: Persistence support available.
+1770916813: TLS support available.
+1770916813: TLS-PSK support available.
+1770916813: Websockets support available.
+1770916813: Opening ipv4 listen socket on port 1883.
+1770916813: Opening ipv6 listen socket on port 1883.
+1770916813: mosquitto version 2.1.2 running
+1770917602: mosquitto version 2.1.2 terminating
+1770917602: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1770945323: mosquitto version 2.1.2 starting
+1770945323: Config loaded from /mosquitto/config/mosquitto.conf.
+1770945323: Bridge support available.
+1770945323: Persistence support available.
+1770945323: TLS support available.
+1770945323: TLS-PSK support available.
+1770945323: Websockets support available.
+1770945323: Opening ipv4 listen socket on port 1883.
+1770945323: Opening ipv6 listen socket on port 1883.
+1770945323: mosquitto version 2.1.2 running
+1770945324: New connection from 172.19.0.4:50676 on port 1883.
+1770945324: New client connected from 172.19.0.4:50676 as edge-agent-1 (p4, c0, k5).
+1770945329: New connection from 172.19.0.5:53446 on port 1883.
+1770945329: New client connected from 172.19.0.5:53446 as central-server (p4, c0, k5).
+1770946538: Client edge-agent-1 [172.19.0.4:50676] disconnected: connection closed by client.
+1770946538: Client central-server [172.19.0.5:53446] disconnected: connection closed by client.
+1770946539: New connection from 172.19.0.4:47252 on port 1883.
+1770946539: Client edge-agent-1 [172.19.0.4:50676] disconnected: session taken over.
+1770946539: New client connected from 172.19.0.4:47252 as edge-agent-1 (p4, c0, k5).
+1770946540: New connection from 172.19.0.5:37966 on port 1883.
+1770946540: Client central-server [172.19.0.5:53446] disconnected: session taken over.
+1770946540: New client connected from 172.19.0.5:37966 as central-server (p4, c0, k5).
+1770947201: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1770948435: Client central-server [172.19.0.5:37966] disconnected: connection closed by client.
+1770948435: Client edge-agent-1 [172.19.0.4:47252] disconnected: connection closed by client.
+1770948436: New connection from 172.19.0.4:48076 on port 1883.
+1770948436: Client edge-agent-1 [172.19.0.4:47252] disconnected: session taken over.
+1770948436: New client connected from 172.19.0.4:48076 as edge-agent-1 (p4, c0, k5).
+1770948437: New connection from 172.19.0.5:45330 on port 1883.
+1770948437: Client central-server [172.19.0.5:37966] disconnected: session taken over.
+1770948437: New client connected from 172.19.0.5:45330 as central-server (p4, c0, k5).
+1770948850: Client edge-agent-1 [172.19.0.4:48076] disconnected: connection closed by client.
+1770948850: New connection from 172.19.0.4:58266 on port 1883.
+1770948850: Client edge-agent-1 [172.19.0.4:48076] disconnected: session taken over.
+1770948850: New client connected from 172.19.0.4:58266 as edge-agent-1 (p4, c0, k5).
+1770949081: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1770949436: Client edge-agent-1 [172.19.0.4:58266] disconnected: connection closed by client.
+1770949436: New connection from 172.19.0.4:41528 on port 1883.
+1770949436: Client edge-agent-1 [172.19.0.4:58266] disconnected: session taken over.
+1770949436: New client connected from 172.19.0.4:41528 as edge-agent-1 (p4, c0, k5).
+1770949641: Client edge-agent-1 [172.19.0.4:41528] disconnected: connection closed by client.
+1770949641: Client central-server [172.19.0.5:45330] disconnected: connection closed by client.
+1770949641: mosquitto version 2.1.2 terminating
+1770949641: Saving in-memory database to /mosquitto/data//mosquitto.db.
+1770950392: mosquitto version 2.1.2 starting
+1770950392: Config loaded from /mosquitto/config/mosquitto.conf.
+1770950392: Bridge support available.
+1770950392: Persistence support available.
+1770950392: TLS support available.
+1770950392: TLS-PSK support available.
+1770950392: Websockets support available.
+1770950392: Opening ipv4 listen socket on port 1883.
+1770950392: Opening ipv6 listen socket on port 1883.
+1770950392: mosquitto version 2.1.2 running
+1770950392: New connection from 172.19.0.4:54724 on port 1883.
+1770950392: Client edge-agent-1 [(null):0] disconnected: session taken over.
+1770950392: New client connected from 172.19.0.4:54724 as edge-agent-1 (p4, c0, k5).
+1770950397: New connection from 172.19.0.5:34696 on port 1883.
+1770950397: Client central-server [(null):0] disconnected: session taken over.
+1770950397: New client connected from 172.19.0.5:34696 as central-server (p4, c0, k5).
+1770950412: Client edge-agent-1 [172.19.0.4:54724] disconnected: connection closed by client.
+1770950412: Client central-server [172.19.0.5:34696] disconnected: connection closed by client.
+1770950412: mosquitto version 2.1.2 terminating
+1770950412: Saving in-memory database to /mosquitto/data//mosquitto.db.

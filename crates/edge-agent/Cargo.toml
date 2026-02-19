@@ -1,0 +1,35 @@
+[package]
+name = "edge-agent"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "edge-agent"
+path = "src/main.rs"
+
+[lib]
+name = "edge_agent"
+path = "src/lib.rs"
+
+[dependencies]
+domain = { path = "../domain" }
+dotenv = "0.15.0"
+infrastructure = { path = "../infrastructure" }
+application = { path = "../application" }
+clap = { version = "4.5", features = ["derive"] }
+anyhow = { workspace = true }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+rumqttc = "0.24"
+config = "0.13"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sea-orm = { version = "1.1", features = [ "sqlx-sqlite", "runtime-tokio-rustls", "macros" ] }
+sqlx = { workspace = true, features = ["sqlite", "runtime-tokio", "macros"] }
+chrono = { workspace = true }
+
+[dev-dependencies]
+uuid = { version = "1.10", features = ["v4", "fast-rng"] }
+async-trait = "0.1"

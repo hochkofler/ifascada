@@ -1,0 +1,77 @@
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: ifascada-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: scada
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - scada-net
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U admin -d scada" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    container_name: ifascada-mqtt
+    restart: always
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    networks:
+      - scada-net
+
+  central-server:
+    build:
+      context: .
+      target: central-server
+    container_name: ifascada-central
+    restart: on-failure
+    depends_on:
+      db:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    environment:
+      - DATABASE_URL=postgres://admin:password@db:5432/scada
+      - RUST_LOG=info,central_server=debug
+    command: central-server --mqtt-host mqtt --mqtt-port 1883 --api-port 3000
+    ports:
+      - "3000:3000"
+    networks:
+      - scada-net
+
+  edge-agent:
+    build:
+      context: .
+      target: edge-agent
+    container_name: ifascada-edge-1
+    restart: on-failure
+    depends_on:
+      - mqtt
+    environment:
+      - RUST_LOG=info,edge_agent=debug
+    # We will mount a custom config to simulate being on a "remote" device
+    # But for now, CLI args override is easier for testing IPs
+    command: edge-agent --agent-id agent-1 --mqtt-host mqtt --mqtt-port 1883
+    networks:
+      - scada-net
+
+networks:
+  scada-net:
+    driver: bridge
+
+volumes:
+  postgres_data:

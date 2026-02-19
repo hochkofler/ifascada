@@ -1,0 +1,21 @@
+agent_id = "test-agent-rs232"
+
+[mqtt]
+host = "localhost"
+port = 1883
+status_topic = "scada/status"
+
+[printer]
+enabled = true
+type = "File"
+path = "\\\\192.168.103.154\\EPSON TM-U220 Receipt LCC"
+
+# Tags will be loaded from Central Server via MQTT
+# stored in config/last_known.json
+[[tags]]
+id = "WAITING_FOR_SYNC"
+driver = "Simulator"
+driver_config = { min_value = 0.0, max_value = 0.0, interval_ms = 10000, unit = "none", pattern = "constant" }
+update_mode = { type = "Polling", interval_ms = 10000 }
+value_type = "Simple"
+enabled = true

@@ -1,0 +1,29 @@
+[package]
+name = "infrastructure"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+domain = { path = "../domain" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true, features = ["sqlite"] }
+serde = { workspace = true }
+bytes = "1.5"
+serde_json = { workspace = true }
+async-trait = "0.1"
+chrono = { workspace = true }
+tokio-serial = { workspace = true }
+tokio-modbus = { version = "0.14", default-features = false, features = ["rtu"] }
+tracing = { workspace = true }
+dotenv = "0.15.0"
+regex = "1.10"
+rumqttc = "0.24"
+config = "0.13"
+sea-orm = { version = "1.1", features = [ "sqlx-postgres", "runtime-tokio-rustls", "macros", "sqlx-sqlite" ] }
+sea-orm-migration = "1.1"
+time = { version = "0.3", features = ["serde", "serde-human-readable"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+uuid = { version = "1.20.0", features = ["v4"] }

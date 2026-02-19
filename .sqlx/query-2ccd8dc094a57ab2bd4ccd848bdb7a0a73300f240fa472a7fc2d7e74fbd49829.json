@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO tags (\n                id, driver_type, driver_config, edge_agent_id,\n                update_mode, update_config, value_type, value_schema,\n                enabled, description, metadata,\n                last_value, last_update, status, quality, error_message,\n                created_at, updated_at, pipeline_config\n            ) VALUES (\n                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19\n            )\n            ON CONFLICT (id) DO UPDATE SET\n                driver_type = EXCLUDED.driver_type,\n                driver_config = EXCLUDED.driver_config,\n                edge_agent_id = EXCLUDED.edge_agent_id,\n                update_mode = EXCLUDED.update_mode,\n                update_config = EXCLUDED.update_config,\n                value_type = EXCLUDED.value_type,\n                value_schema = EXCLUDED.value_schema,\n                enabled = EXCLUDED.enabled,\n                last_value = EXCLUDED.last_value,\n                last_update = EXCLUDED.last_update,\n                status = EXCLUDED.status,\n                quality = EXCLUDED.quality,\n                error_message = EXCLUDED.error_message,\n                updated_at = EXCLUDED.updated_at,\n                pipeline_config = EXCLUDED.pipeline_config\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Varchar",
+        "Jsonb",
+        "Bool",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2ccd8dc094a57ab2bd4ccd848bdb7a0a73300f240fa472a7fc2d7e74fbd49829"
+}

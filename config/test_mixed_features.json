@@ -1,0 +1,118 @@
+{
+    "agent_id": "test-agent-01",
+    "mqtt": {
+        "host": "localhost",
+        "port": 1883
+    },
+    "tags": [
+        {
+            "id": "sim_raw_mettler",
+            "driver": "Simulator",
+            "driver_config": {
+                "min_value": 10.0,
+                "max_value": 20.0,
+                "interval_ms": 1000,
+                "unit": "kg"
+            },
+            "description": "Simulated Balance (Raw String)",
+            "value_type": "Simple"
+        },
+        {
+            "id": "sim_parsed_temp",
+            "driver": "Simulator",
+            "driver_config": {
+                "min_value": 20.0,
+                "max_value": 30.0,
+                "interval_ms": 2000,
+                "unit": "C",
+                "pattern": "TEMP: {} C"
+            },
+            "description": "Simulated Temp (Regex Parsed)",
+            "value_type": "Simple",
+            "pipeline": {
+                "parser": {
+                    "type": "Regex",
+                    "pattern": "TEMP:\\s*([\\d.]+)\\s*C"
+                },
+                "validators": []
+            }
+        },
+        {
+            "id": "sim_range_ok",
+            "driver": "Simulator",
+            "driver_config": {
+                "min_value": 40.0,
+                "max_value": 60.0,
+                "interval_ms": 1000,
+                "unit": "%"
+            },
+            "description": "Range Validated (OK)",
+            "pipeline": {
+                "validators": [
+                    {
+                        "type": "Range",
+                        "min": 0.0,
+                        "max": 100.0
+                    }
+                ]
+            }
+        },
+        {
+            "id": "sim_range_fail",
+            "driver": "Simulator",
+            "driver_config": {
+                "min_value": 150.0,
+                "max_value": 200.0,
+                "interval_ms": 1000,
+                "unit": "%"
+            },
+            "description": "Range Validated (Should Fail)",
+            "pipeline": {
+                "validators": [
+                    {
+                        "type": "Range",
+                        "min": 0.0,
+                        "max": 100.0
+                    }
+                ]
+            }
+        },
+        {
+            "id": "sim_composite_json",
+            "driver": "Simulator",
+            "driver_config": {
+                "min_value": 100.0,
+                "max_value": 110.0,
+                "interval_ms": 5000,
+                "unit": "",
+                "pattern": "{\"pressure\": {}, \"unit\": \"bar\", \"status\": \"ok\"}"
+            },
+            "description": "Composite JSON Data",
+            "value_type": "Composite",
+            "pipeline": {
+                "parser": {
+                    "type": "Json",
+                    "path": ""
+                }
+            }
+        },
+        {
+            "id": "balance_real_case",
+            "driver": "Simulator",
+            "driver_config": {
+                "min_value": 5.0,
+                "max_value": 5.5,
+                "interval_ms": 500,
+                "unit": "g"
+            },
+            "description": "Real Balance Case (Mettler Toledo)",
+            "value_type": "Simple",
+            "pipeline": {
+                "parser": {
+                    "type": "Regex",
+                    "pattern": "ST,GS,\\s*([\\d.]+)\\s*[a-zA-Z]+"
+                }
+            }
+        }
+    ]
+}

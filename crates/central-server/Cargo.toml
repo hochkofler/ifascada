@@ -1,0 +1,41 @@
+[package]
+name = "central-server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "central-server"
+path = "src/main.rs"
+
+[lib]
+name = "central_server"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true, features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+axum = { workspace = true }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+rumqttc = "0.24"
+clap = { version = "4.5", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenv = "0.15.0"
+chrono = { workspace = true }
+time = { version = "0.3", features = ["macros", "formatting", "parsing", "serde", "serde-human-readable"] }
+futures = "0.3"
+domain = { path = "../domain" }
+application = { path = "../application" }
+infrastructure = { path = "../infrastructure" }
+sqlx = { workspace = true, features = ["postgres", "sqlite", "runtime-tokio", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "macros"] }
+uuid = { version = "1.10", features = ["v4", "fast-rng"] }
+serde_json = { workspace = true }
+infrastructure = { path = "../infrastructure" }
