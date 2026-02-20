@@ -2,7 +2,7 @@ use anyhow::Result;
 use domain::tag::{
     PipelineConfig, PipelineFactory, ScalingConfig, TagId, ValueParser, ValueValidator,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 /// Service responsible for processing raw tag values through the configured pipeline.
 ///

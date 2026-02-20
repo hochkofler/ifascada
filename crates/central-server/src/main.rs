@@ -244,7 +244,7 @@ async fn process_mqtt_message(state: &AppState, msg: MqttMessage) {
             }
         }
 
-        info!(agent_id = %agent_id, status = ?status, "Agent Status Change");
+        // info!(agent_id = %agent_id, status = ?status, "Agent Status Change"); // Removed redundant log
         state.update_agent_status(agent_id, status);
 
         // Status messages are critical but transient. We Ack them immediately after updating memory.

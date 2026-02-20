@@ -1,15 +1,12 @@
 use std::sync::Arc;
-use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
 use crate::tag::TagPipeline;
 use domain::device::Device;
 use domain::driver::DeviceDriver;
 use domain::event::{DomainEvent, EventPublisher};
-use domain::tag::{PipelineFactory, Tag, TagId, TagQuality, TagUpdateMode};
+use domain::tag::{PipelineFactory, Tag, TagQuality, TagUpdateMode};
 use tokio_util::sync::CancellationToken;
-
-use dashmap::DashSet;
 
 /// Actor that manages a single Device and its Driver
 pub struct DeviceActor {
@@ -19,7 +16,6 @@ pub struct DeviceActor {
     event_publisher: Arc<dyn EventPublisher>,
     pipelines: Vec<TagPipeline>,
     cancel_token: CancellationToken,
-    connected_registry: Arc<DashSet<TagId>>,
 }
 
 impl DeviceActor {
@@ -48,11 +44,10 @@ impl DeviceActor {
             event_publisher,
             pipelines,
             cancel_token: CancellationToken::new(),
-            connected_registry: Arc::new(DashSet::new()),
         }
     }
 
-    pub async fn run(mut self) {
+    pub async fn run(self) {
         let DeviceActor {
             device,
             mut driver,
@@ -60,7 +55,6 @@ impl DeviceActor {
             event_publisher,
             pipelines,
             cancel_token,
-            connected_registry: _, // Not used in run loop directly
         } = self;
 
         info!("Starting DeviceActor for {}", device.id);

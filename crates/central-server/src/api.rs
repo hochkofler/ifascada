@@ -8,7 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use futures::Stream;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{sync::Arc, time::Duration};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
