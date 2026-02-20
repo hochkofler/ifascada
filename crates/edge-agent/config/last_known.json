@@ -16,11 +16,6 @@
     }
   ],
   "heartbeat_interval_secs": 30,
-  "mqtt": {
-    "host": "localhost",
-    "port": 1883,
-    "status_topic": null
-  },
   "tags": [
     {
       "automations": [],
@@ -48,5 +43,5 @@
       "value_type": "Composite"
     }
   ],
-  "version": "89acbefa-3912-4de3-ab1f-9b7eabe574b9"
+  "version": "3e22391e-bf1c-4c00-8efe-c8ca37930fd5"
 }

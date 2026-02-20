@@ -96,6 +96,13 @@ impl AppState {
         agent.last_seen = chrono::Utc::now();
 
         if old_status.to_string() != status.to_string() {
+            info!(
+                agent_id = %agent_id,
+                old_status = ?old_status,
+                new_status = ?status,
+                "Agent Status Changed"
+            );
+
             // Persist transition (Fire and Forget for now, or use a channel)
             let pool = self.pool.clone();
             let aid = agent_id.clone();

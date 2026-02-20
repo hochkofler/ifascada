@@ -44,7 +44,7 @@ impl MqttClient {
         last_will: Option<LastWill>,
     ) -> Result<Self> {
         let mut mqttoptions = MqttOptions::new(client_id, host, port);
-        mqttoptions.set_keep_alive(Duration::from_secs(5));
+        mqttoptions.set_keep_alive(Duration::from_secs(20));
         mqttoptions.set_clean_session(false); // Persistent session for commands
         mqttoptions.set_manual_acks(true); // Enable Manual Acks for reliability
 
@@ -52,8 +52,8 @@ impl MqttClient {
             mqttoptions.set_last_will(will);
         }
 
-        let (client, mut eventloop) = AsyncClient::new(mqttoptions, 10);
-        let (tx, _) = broadcast::channel(100);
+        let (client, mut eventloop) = AsyncClient::new(mqttoptions, 100);
+        let (tx, _) = broadcast::channel(250);
         let tx_clone = tx.clone();
         let connected = Arc::new(AtomicBool::new(false));
         let connected_clone = connected.clone();

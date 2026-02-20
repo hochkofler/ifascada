@@ -117,16 +117,32 @@ impl ConfigManager {
                     }
                 }
 
-                // 1. Save to file
-                match tokio::fs::write(&self.config_path, &clean_payload).await {
+                // 1. Prepare Payload for persistence (Remove MQTT to preserve local config)
+                let mut save_payload = clean_payload.clone();
+                if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&save_payload) {
+                    if let Some(obj) = json.as_object_mut() {
+                        if obj.contains_key("mqtt") {
+                            info!(
+                                "🔒 Stripping 'mqtt' section from persisted config to enforce local connection settings."
+                            );
+                            obj.remove("mqtt");
+                            if let Ok(new_bytes) = serde_json::to_vec_pretty(&json) {
+                                save_payload = new_bytes;
+                            }
+                        }
+                    }
+                }
+
+                // 2. Save to file
+                match tokio::fs::write(&self.config_path, &save_payload).await {
                     Ok(_) => info!("✅ Configuration saved to {:?}", self.config_path),
                     Err(e) => tracing::error!("Failed to write config file: {}", e),
                 }
 
-                // 2. Hot Reload
+                // 3. Hot Reload (Keep 'mqtt' in payload as AgentConfig requires it for deserialization)
                 self.handle_reload(&clean_payload).await;
 
-                // 3. Ack the message
+                // 4. Ack the message
                 if let Err(e) = self.mqtt_client.ack(&msg.topic, msg.pkid).await {
                     tracing::error!("Failed to ack config update: {}", e);
                 }
