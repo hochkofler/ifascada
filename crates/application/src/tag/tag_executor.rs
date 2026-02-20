@@ -6,11 +6,12 @@ use anyhow::{Context, Result};
 use tokio::time::{interval, sleep};
 
 use domain::driver::DriverConnection;
-use domain::tag::{ScalingConfig, TagUpdateMode};
+use domain::tag::TagUpdateMode;
 use domain::{DomainEvent, Tag, TagId, TagQuality};
 
+use crate::tag::TagPipeline;
 use domain::event::EventPublisher;
-use domain::tag::{PipelineFactory, ValueParser, ValueValidator};
+use domain::tag::PipelineFactory;
 use tokio_util::sync::CancellationToken;
 
 /// # Use Case: Execute Tag Pipeline (UC-APP-001)
@@ -42,9 +43,7 @@ pub struct TagExecutor {
     tag: Tag,
     driver: Box<dyn DriverConnection>,
     event_publisher: Arc<dyn EventPublisher>,
-    parser: Option<Box<dyn ValueParser>>,
-    validators: Vec<Box<dyn ValueValidator>>,
-    scaling: Option<ScalingConfig>,
+    pipeline: TagPipeline,
     reconnect_attempts: u32,
     cancel_token: CancellationToken,
     connected_registry: Arc<DashSet<TagId>>,
@@ -60,40 +59,14 @@ impl TagExecutor {
         cancel_token: CancellationToken,
         connected_registry: Arc<DashSet<TagId>>,
     ) -> Self {
-        let pipeline_config = tag.pipeline_config().clone();
-        let scaling = pipeline_config.scaling.clone();
-
-        if scaling.is_some() {
-            tracing::info!(tag_id = %tag.id(), "Executor initialized with scaling config");
-        }
-
-        let parser = if let Some(config) = &pipeline_config.parser {
-            match pipeline_factory.create_parser(config) {
-                Ok(p) => Some(p),
-                Err(e) => {
-                    tracing::error!("Failed to create parser: {}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let mut validators = Vec::new();
-        for config in &pipeline_config.validators {
-            match pipeline_factory.create_validator(config) {
-                Ok(v) => validators.push(v),
-                Err(e) => tracing::error!("Failed to create validator: {}", e),
-            }
-        }
+        let pipeline_config = tag.pipeline_config();
+        let pipeline = TagPipeline::new(tag.id().clone(), pipeline_config, pipeline_factory);
 
         Self {
             tag,
             driver,
             event_publisher,
-            parser,
-            validators,
-            scaling,
+            pipeline,
             reconnect_attempts: 0,
             cancel_token,
             connected_registry,
@@ -423,77 +396,11 @@ impl TagExecutor {
 
     /// Process raw value through pipeline (parse -> validate)
     fn process_value(&self, raw: serde_json::Value) -> Result<Option<serde_json::Value>> {
-        // 1. Parsing
-        let parsed_value = if let Some(parser) = &self.parser {
-            // Convert to string for parsing if it's not already string-like or if parser expects string
-            // Parser trait takes &str.
-            let raw_str = match &raw {
-                serde_json::Value::String(s) => s.clone(),
-                _ => raw.to_string(), // Convert non-strings to string rep
-            };
-
-            match parser.parse(&raw_str) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Parsing failed for tag {}: {}", self.tag.id(), e);
-                    // If parsing fails, do we discard?
-                    // Yes, treating as invalid data format.
-                    return Ok(None);
-                }
-            }
-        } else {
-            raw.clone()
-        };
-
-        // 2. Validation
-        for validator in &self.validators {
-            if let Err(e) = validator.validate(&parsed_value) {
-                tracing::warn!(
-                    "Validation failed for tag {}: value = {} error = {}",
-                    self.tag.id(),
-                    parsed_value,
-                    e
-                );
-                return Ok(None);
-            }
+        let result = self.pipeline.process(raw)?;
+        if let Some(ref val) = result {
+            tracing::info!(tag_id = %self.tag.id(), final_value = %val, "Pipeline processing complete");
         }
-
-        // 3. Scaling (y = x * slope + intercept)
-        let scaled_value = if let Some(ScalingConfig::Linear { slope, intercept }) = &self.scaling {
-            // Try to get numeric value, also checking for single-element arrays (common in Modbus)
-            let val_to_scale = if let Some(num) = parsed_value.as_f64() {
-                Some(num)
-            } else if let Some(arr) = parsed_value.as_array() {
-                if arr.len() == 1 {
-                    arr[0].as_f64()
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            if let Some(num) = val_to_scale {
-                let result = num * slope + intercept;
-                tracing::info!(tag_id = %self.tag.id(), input = %num, slope = %slope, intercept = %intercept, result = %result, "Linear scaling applied");
-                serde_json::json!(result)
-            } else {
-                tracing::warn!(
-                    "Scaling configured for tag {} but value is not numeric or single-element array: {}",
-                    self.tag.id(),
-                    parsed_value
-                );
-                parsed_value
-            }
-        } else {
-            if self.tag.id().as_str() == "Temp" || self.tag.id().as_str() == "Humedad" {
-                tracing::debug!(tag_id = %self.tag.id(), "Scaling NOT applied (no config found in executor)");
-            }
-            parsed_value
-        };
-
-        tracing::info!(tag_id = %self.tag.id(), final_value = %scaled_value, "Pipeline processing complete");
-        Ok(Some(scaled_value))
+        Ok(result)
     }
 }
 
@@ -501,7 +408,7 @@ impl TagExecutor {
 mod tests {
     use super::*;
     use domain::driver::ConnectionState;
-    use domain::tag::{TagStatus, TagValueType};
+    use domain::tag::{TagStatus, TagValueType, ValueParser, ValueValidator};
     use domain::{DomainError, TagId};
     use serde_json::json;
     // use std::sync::Mutex; // REMOVED

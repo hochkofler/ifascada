@@ -2,13 +2,11 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
+use crate::tag::TagPipeline;
 use domain::device::Device;
 use domain::driver::DeviceDriver;
 use domain::event::{DomainEvent, EventPublisher};
-use domain::tag::{
-    PipelineFactory, ScalingConfig, Tag, TagId, TagQuality, TagUpdateMode, ValueParser,
-    ValueValidator,
-}; // Added missing imports
+use domain::tag::{PipelineFactory, Tag, TagId, TagQuality, TagUpdateMode};
 use tokio_util::sync::CancellationToken;
 
 use dashmap::DashSet;
@@ -19,16 +17,9 @@ pub struct DeviceActor {
     driver: Box<dyn DeviceDriver>,
     tags: Vec<Tag>,
     event_publisher: Arc<dyn EventPublisher>,
-    pipelines: Vec<TagPipelineExecutor>,
+    pipelines: Vec<TagPipeline>,
     cancel_token: CancellationToken,
     connected_registry: Arc<DashSet<TagId>>,
-}
-
-struct TagPipelineExecutor {
-    tag_id: String,
-    parser: Option<Box<dyn ValueParser>>,
-    validators: Vec<Box<dyn ValueValidator>>,
-    scaling: Option<ScalingConfig>,
 }
 
 impl DeviceActor {
@@ -42,24 +33,11 @@ impl DeviceActor {
         let pipelines = tags
             .iter()
             .map(|tag| {
-                let config = tag.pipeline_config();
-                let parser = config
-                    .parser
-                    .as_ref()
-                    .and_then(|c| pipeline_factory.create_parser(c).ok());
-                let validators = config
-                    .validators
-                    .iter()
-                    .filter_map(|c| pipeline_factory.create_validator(c).ok())
-                    .collect();
-                let scaling = config.scaling.clone();
-
-                TagPipelineExecutor {
-                    tag_id: tag.id().to_string(),
-                    parser,
-                    validators,
-                    scaling,
-                }
+                TagPipeline::new(
+                    tag.id().clone(),
+                    tag.pipeline_config(),
+                    pipeline_factory.as_ref(),
+                )
             })
             .collect();
 
@@ -141,43 +119,17 @@ impl DeviceActor {
                                                 val.clone()
                                             };
 
-                                            let pipeline = pipelines.iter().find(|p| p.tag_id == tag.id().as_str());
-                                            let mut final_val = processed_val;
+                                            let pipeline = pipelines.iter().find(|p| p.tag_id() == tag.id());
+                                            let mut final_val = processed_val.clone();
                                             let mut should_update = true;
 
                                             if let Some(pipe) = pipeline {
-                                                // 2.1 Parsing
-                                                if let Some(parser) = &pipe.parser {
-                                                    let raw_str = match &final_val {
-                                                        serde_json::Value::String(s) => s.clone(),
-                                                        _ => final_val.to_string(),
-                                                    };
-                                                    if let Ok(v) = parser.parse(&raw_str) {
-                                                        final_val = v;
-                                                    } else {
-                                                        warn!(tag_id = %tag.id(), "Parsing failed");
+                                                match pipe.process(processed_val) {
+                                                    Ok(Some(v)) => final_val = v,
+                                                    Ok(None) => should_update = false,
+                                                    Err(e) => {
+                                                        warn!(tag_id = %tag.id(), error = %e, "Pipeline processing error");
                                                         should_update = false;
-                                                    }
-                                                }
-                                                // 2.2 Validation
-                                                if should_update {
-                                                    for v in &pipe.validators {
-                                                        if let Err(e) = v.validate(&final_val) {
-                                                            warn!(tag_id = %tag.id(), error = %e, "Validation failed");
-                                                            should_update = false;
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-
-                                                // 2.3 Scaling
-                                                if should_update {
-                                                    if let Some(ScalingConfig::Linear { slope, intercept }) = &pipe.scaling {
-                                                        if let Some(num) = final_val.as_f64() {
-                                                            let result = num * slope + intercept;
-                                                            let rounded = (result * 10000.0).round() / 10000.0;
-                                                            final_val = serde_json::json!(rounded);
-                                                        }
                                                     }
                                                 }
                                             }
@@ -192,6 +144,11 @@ impl DeviceActor {
                                         }
                                         Err(e) => {
                                             warn!(tag_id = %tag_id, "Read failed: {}", e);
+                                            tag.update_value(serde_json::Value::Null, TagQuality::Bad);
+                                            let event = DomainEvent::tag_value_updated(tag.id().clone(), serde_json::Value::Null, TagQuality::Bad);
+                                             if let Err(e) = event_publisher.publish(event).await {
+                                                 warn!("Failed to publish bad quality event: {}", e);
+                                             }
                                         }
                                      }
                                 }
