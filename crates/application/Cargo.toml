@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 domain = { path = "../domain" }
+dashmap = "5.5"
 infrastructure = { path = "../infrastructure" }
 anyhow = { workspace = true }
 tokio = { workspace = true }

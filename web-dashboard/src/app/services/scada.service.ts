@@ -79,8 +79,11 @@ export class ScadaService {
         return this.http.post(`${this.baseUrl}/reports/${id}/reprint`, {});
     }
 
-    getTagHistory(id: string, limit: number = 30, offset: number = 0): Observable<TagHistoryEntry[]> {
-        return this.http.get<TagHistoryEntry[]>(`${this.baseUrl}/tags/${id}/history?limit=${limit}&offset=${offset}`);
+    getTagHistory(id: string, limit: number = 30, offset: number = 0, start?: string, end?: string): Observable<TagHistoryEntry[]> {
+        let params = `limit=${limit}&offset=${offset}`;
+        if (start) params += `&start=${start}`;
+        if (end) params += `&end=${end}`;
+        return this.http.get<TagHistoryEntry[]>(`${this.baseUrl}/tags/${id}/history?${params}`);
     }
 
     batchPrintEvents(eventIds: number[]): Observable<any> {

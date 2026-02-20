@@ -29,6 +29,11 @@ import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
               <span class="icon">🛡️</span> Traceability
             </a>
           </li>
+          <li>
+            <a routerLink="/trends" routerLinkActive="active">
+              <span class="icon">📈</span> Trends
+            </a>
+          </li>
         </ul>
 
         <div class="sidebar-footer">

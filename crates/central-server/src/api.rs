@@ -8,7 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use futures::Stream;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
@@ -256,31 +256,116 @@ async fn reprint_report(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct HistoryQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    start: Option<String>,
+    end: Option<String>,
+}
+
 async fn get_tag_history(
     Path(id): Path<String>,
     State(state): State<Arc<AppState>>,
-    axum::extract::Query(pagination): axum::extract::Query<Pagination>,
+    axum::extract::Query(query): axum::extract::Query<HistoryQuery>,
 ) -> impl IntoResponse {
-    let limit = pagination.limit.unwrap_or(30);
-    let offset = pagination.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(100);
+    let offset = query.offset.unwrap_or(0);
 
-    // The tag_events table uses tag_id (renamed from raw_tag_id) and created_at (added)
-    let history = sqlx::query!(
-        r#"
-        SELECT id, value, quality, timestamp, created_at
-        FROM tag_events
-        WHERE tag_id = $1
-        ORDER BY timestamp DESC
-        LIMIT $2 OFFSET $3
-        "#,
-        id,
-        limit,
-        offset
-    )
-    .fetch_all(&state.pool)
-    .await;
+    // Common struct to unify return types from different sqlx macros
+    struct HistoryRow {
+        id: i64,
+        value: serde_json::Value,
+        quality: String,
+        timestamp: time::OffsetDateTime,
+        created_at: Option<time::OffsetDateTime>,
+    }
 
-    match history {
+    let history_result: Result<Vec<HistoryRow>, _> =
+        if let (Some(start), Some(end)) = (&query.start, &query.end) {
+            sqlx::query!(
+                r#"
+            SELECT id, value, quality, timestamp, created_at
+            FROM tag_events
+            WHERE tag_id = $1 AND timestamp >= $4::timestamptz AND timestamp <= $5::timestamptz
+            ORDER BY timestamp ASC
+            LIMIT $2 OFFSET $3
+            "#,
+                id,
+                limit,
+                offset,
+                start as &String,
+                end as &String
+            )
+            .fetch_all(&state.pool)
+            .await
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|r| HistoryRow {
+                        id: r.id,
+                        value: r.value,
+                        quality: r.quality,
+                        timestamp: r.timestamp,
+                        created_at: r.created_at,
+                    })
+                    .collect()
+            })
+        } else if let Some(start) = &query.start {
+            sqlx::query!(
+                r#"
+            SELECT id, value, quality, timestamp, created_at
+            FROM tag_events
+            WHERE tag_id = $1 AND timestamp >= $4::timestamptz
+            ORDER BY timestamp ASC
+            LIMIT $2 OFFSET $3
+            "#,
+                id,
+                limit,
+                offset,
+                start as &String
+            )
+            .fetch_all(&state.pool)
+            .await
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|r| HistoryRow {
+                        id: r.id,
+                        value: r.value,
+                        quality: r.quality,
+                        timestamp: r.timestamp,
+                        created_at: r.created_at,
+                    })
+                    .collect()
+            })
+        } else {
+            sqlx::query!(
+                r#"
+            SELECT id, value, quality, timestamp, created_at
+            FROM tag_events
+            WHERE tag_id = $1
+            ORDER BY timestamp DESC
+            LIMIT $2 OFFSET $3
+            "#,
+                id,
+                limit,
+                offset
+            )
+            .fetch_all(&state.pool)
+            .await
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|r| HistoryRow {
+                        id: r.id,
+                        value: r.value,
+                        quality: r.quality,
+                        timestamp: r.timestamp,
+                        created_at: r.created_at,
+                    })
+                    .collect()
+            })
+        };
+
+    match history_result {
         Ok(list) => {
             let history_json: Vec<_> = list
                 .iter()

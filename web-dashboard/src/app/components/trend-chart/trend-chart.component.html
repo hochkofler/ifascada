@@ -1,0 +1,41 @@
+<div class="trend-wrapper">
+  <div class="controls-card">
+    <h2>Trend Analysis</h2>
+    
+    <div class="control-group">
+      <label>Tag</label>
+      <select [(ngModel)]="selectedTagId" (change)="onTagChange()">
+        <option *ngFor="let tag of tags" [value]="tag.id">{{ tag.id }}</option>
+      </select>
+    </div>
+
+    <div class="control-row">
+      <div class="control-group">
+        <label>Start Time</label>
+        <input type="datetime-local" [(ngModel)]="startTime">
+      </div>
+
+      <div class="control-group">
+        <label>End Time</label>
+        <input type="datetime-local" [(ngModel)]="endTime">
+      </div>
+      
+      <div class="control-group">
+        <label>Points Limit</label>
+        <input type="number" [(ngModel)]="limit" min="10" max="5000">
+      </div>
+    </div>
+
+    <button class="btn-refresh" (click)="refresh()" [disabled]="isLoading">
+      {{ isLoading ? 'Loading...' : 'Update Chart' }}
+    </button>
+    
+    <div class="error-msg" *ngIf="errorMsg">{{ errorMsg }}</div>
+  </div>
+
+  <div class="chart-card">
+    <div class="canvas-container">
+      <canvas #trendChart></canvas>
+    </div>
+  </div>
+</div>
