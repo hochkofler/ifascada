@@ -199,12 +199,17 @@ impl ValueParser for IndexMapParser {
 
 // --- Factory ---
 
-pub struct PipelineFactory;
+pub struct ConcretePipelineFactory;
 
-impl PipelineFactory {
-    pub fn create_parser(config: &ParserConfig) -> Result<Box<dyn ValueParser>> {
+impl domain::tag::PipelineFactory for ConcretePipelineFactory {
+    fn create_parser(
+        &self,
+        config: &ParserConfig,
+    ) -> Result<Box<dyn ValueParser>, Box<dyn std::error::Error + Send + Sync>> {
         match config {
-            ParserConfig::Regex { pattern } => Ok(Box::new(RegexParser::new(pattern)?)),
+            ParserConfig::Regex { pattern } => Ok(Box::new(
+                RegexParser::new(pattern).map_err(|e| e.to_string())?,
+            )),
             ParserConfig::Json { path } => Ok(Box::new(JsonParser::new(path))),
             ParserConfig::IndexMap { keys, scale } => {
                 Ok(Box::new(IndexMapParser::new(keys.clone(), *scale)))
@@ -217,7 +222,10 @@ impl PipelineFactory {
         }
     }
 
-    pub fn create_validator(config: &ValidatorConfig) -> Result<Box<dyn ValueValidator>> {
+    fn create_validator(
+        &self,
+        config: &ValidatorConfig,
+    ) -> Result<Box<dyn ValueValidator>, Box<dyn std::error::Error + Send + Sync>> {
         match config {
             ValidatorConfig::Range { min, max } => Ok(Box::new(RangeValidator::new(*min, *max))),
             ValidatorConfig::Contains { substring } => {

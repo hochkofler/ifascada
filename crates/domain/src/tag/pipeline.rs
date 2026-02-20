@@ -83,3 +83,17 @@ pub trait ValueValidator: Send + Sync + Debug {
         value: &serde_json::Value,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
+
+/// Factory trait for creating pipeline components (parsers, validators)
+/// This allows the application to create these components without depending on the concrete infrastructure implementation.
+pub trait PipelineFactory: Send + Sync {
+    fn create_parser(
+        &self,
+        config: &ParserConfig,
+    ) -> Result<Box<dyn ValueParser>, Box<dyn std::error::Error + Send + Sync>>;
+
+    fn create_validator(
+        &self,
+        config: &ValidatorConfig,
+    ) -> Result<Box<dyn ValueValidator>, Box<dyn std::error::Error + Send + Sync>>;
+}

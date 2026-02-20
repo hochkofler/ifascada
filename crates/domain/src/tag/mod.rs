@@ -12,7 +12,8 @@ mod value_type;
 pub use aggregate::Tag;
 pub use entity::Tag as TagEntity;
 pub use pipeline::{
-    ParserConfig, PipelineConfig, ScalingConfig, ValidatorConfig, ValueParser, ValueValidator,
+    ParserConfig, PipelineConfig, PipelineFactory, ScalingConfig, ValidatorConfig, ValueParser,
+    ValueValidator,
 };
 pub use quality::TagQuality;
 pub use repository::TagRepository;

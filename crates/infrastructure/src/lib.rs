@@ -16,4 +16,3 @@ pub use messaging::buffered_publisher::BufferedMqttPublisher;
 pub use messaging::composite_publisher::CompositeEventPublisher;
 pub use messaging::mqtt_client::{MqttClient, MqttMessage};
 pub use messaging::mqtt_publisher::MqttEventPublisher;
-pub use pipeline::PipelineFactory;

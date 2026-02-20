@@ -8,6 +8,7 @@ use domain::device::Device;
 use domain::event::EventPublisher;
 use domain::tag::Tag;
 use infrastructure::DriverFactory;
+use infrastructure::pipeline::ConcretePipelineFactory; // NEW
 
 use crate::device::DeviceActor;
 
@@ -50,6 +51,9 @@ impl DeviceManager {
             }
         }
 
+        // Create the concrete factory to inject
+        let pipeline_factory = Arc::new(ConcretePipelineFactory);
+
         for device in devices {
             if !device.enabled {
                 info!(device_id = %device.id, "Skipping disabled device");
@@ -80,6 +84,7 @@ impl DeviceManager {
                         driver,
                         tags_for_device,
                         self.event_publisher.clone(),
+                        pipeline_factory.clone(), // Inject factory
                     );
 
                     let dev_id = device.id.clone();

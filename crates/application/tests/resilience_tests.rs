@@ -1,11 +1,12 @@
 use application::tag::TagExecutor;
 use async_trait::async_trait;
+use dashmap::DashSet;
 use domain::driver::{ConnectionState, DriverConnection};
 use domain::event::EventPublisher;
 use domain::tag::{TagUpdateMode, TagValueType};
 use domain::{DomainError, DomainEvent, Tag, TagId};
+use infrastructure::pipeline::ConcretePipelineFactory;
 use serde_json::json;
-use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::Duration;
@@ -84,11 +85,6 @@ impl DriverConnection for ResilienceDriver {
     }
 
     fn is_connected(&self) -> bool {
-        // This method is synchronous, need to use blocking lock or cheat?
-        // Since we are in async context, we shouldn't block.
-        // But the trait is sync.
-        // For testing we can use try_lock or just assume.
-        // Let's rely on self.state.try_lock()
         if let Ok(state) = self.state.try_lock() {
             *state == ConnectionState::Connected
         } else {
@@ -156,8 +152,10 @@ async fn test_infinite_retry_on_startup() {
 
     let (publisher, mut rx_events) = ChannelEventPublisher::new();
     let token = CancellationToken::new();
-    let registry = Arc::new(Mutex::new(HashSet::new()));
-    let mut executor = TagExecutor::new(tag, Box::new(driver), publisher, token, registry);
+    let registry = Arc::new(DashSet::new());
+    let factory = ConcretePipelineFactory;
+    let mut executor =
+        TagExecutor::new(tag, Box::new(driver), publisher, &factory, token, registry);
 
     // Spawn executor
     let handle = tokio::spawn(async move {
@@ -231,8 +229,16 @@ async fn test_runtime_self_healing() {
 
     let (publisher, mut rx_events) = ChannelEventPublisher::new();
     let token = CancellationToken::new();
-    let registry = Arc::new(Mutex::new(HashSet::new()));
-    let mut executor = TagExecutor::new(tag, Box::new(driver.clone()), publisher, token, registry);
+    let registry = Arc::new(DashSet::new());
+    let factory = ConcretePipelineFactory;
+    let mut executor = TagExecutor::new(
+        tag,
+        Box::new(driver.clone()),
+        publisher,
+        &factory,
+        token,
+        registry,
+    );
 
     let handle = tokio::spawn(async move {
         let _ = executor.execute().await;

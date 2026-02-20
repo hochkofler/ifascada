@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use dashmap::DashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,22 +10,44 @@ use domain::tag::{ScalingConfig, TagUpdateMode};
 use domain::{DomainEvent, Tag, TagId, TagQuality};
 
 use domain::event::EventPublisher;
-use domain::tag::{ValueParser, ValueValidator};
-use infrastructure::pipeline::PipelineFactory;
-use tokio::sync::Mutex;
+use domain::tag::{PipelineFactory, ValueParser, ValueValidator};
 use tokio_util::sync::CancellationToken;
 
-/// Tag executor - executes a single tag's read/write loop
+/// # Use Case: Execute Tag Pipeline (UC-APP-001)
+///
+/// Executes the lifecycle of a tag: connecting to a device, reading data,
+/// validating/transforming it, and publishing domain events.
+///
+/// ## Ports (Infrastructure Dependencies)
+/// - `DriverConnection`: Abstraction for physical device communication (Modbus, OPC UA, etc.).
+///   - Mocked to simulate: Connection success/failure, Data reads, Timeouts, Protocol errors.
+/// - `EventPublisher`: Abstraction for internal system messaging.
+///   - Mocked to verify: `TagConnected`, `TagValueUpdated`, `TagError` events.
+///
+/// ## Business Rules
+/// 1. **Connection**: proper driver connection must be established before reading.
+/// 2. **Pipeline Processing**: Raw data must pass through Parser -> Validators -> Scaling.
+/// 3. **Error Handling**:
+///    - If driver read fails -> Tag marked as Error, Retry mechanism initiated.
+///    - If validation fails -> Data discarded, Warning logged (Tag stays Online).
+/// 4. **Eventing**:
+///    - `TagValueUpdated` matches `TagUpdateMode` criteria (Polling vs OnChange).
+///    - `TagError` emitted on critical failures.
+///
+/// ## Test Strategy
+/// - **Happy Path**: Mock driver returns valid data -> Verify value updated & event published.
+/// - **Error Path**: Mock driver returns error -> Verify tag error state & retry backoff.
+/// - **Edge Cases**: Empty data, scaling boundary values, rapid disconnects.
 pub struct TagExecutor {
     tag: Tag,
     driver: Box<dyn DriverConnection>,
     event_publisher: Arc<dyn EventPublisher>,
     parser: Option<Box<dyn ValueParser>>,
     validators: Vec<Box<dyn ValueValidator>>,
-    scaling: Option<ScalingConfig>, // NEW
+    scaling: Option<ScalingConfig>,
     reconnect_attempts: u32,
     cancel_token: CancellationToken,
-    connected_registry: Arc<Mutex<HashSet<TagId>>>,
+    connected_registry: Arc<DashSet<TagId>>,
 }
 
 impl TagExecutor {
@@ -34,8 +56,9 @@ impl TagExecutor {
         tag: Tag,
         driver: Box<dyn DriverConnection>,
         event_publisher: Arc<dyn EventPublisher>,
+        pipeline_factory: &dyn PipelineFactory,
         cancel_token: CancellationToken,
-        connected_registry: Arc<Mutex<HashSet<TagId>>>,
+        connected_registry: Arc<DashSet<TagId>>,
     ) -> Self {
         let pipeline_config = tag.pipeline_config().clone();
         let scaling = pipeline_config.scaling.clone();
@@ -45,7 +68,7 @@ impl TagExecutor {
         }
 
         let parser = if let Some(config) = &pipeline_config.parser {
-            match PipelineFactory::create_parser(config) {
+            match pipeline_factory.create_parser(config) {
                 Ok(p) => Some(p),
                 Err(e) => {
                     tracing::error!("Failed to create parser: {}", e);
@@ -58,7 +81,7 @@ impl TagExecutor {
 
         let mut validators = Vec::new();
         for config in &pipeline_config.validators {
-            match PipelineFactory::create_validator(config) {
+            match pipeline_factory.create_validator(config) {
                 Ok(v) => validators.push(v),
                 Err(e) => tracing::error!("Failed to create validator: {}", e),
             }
@@ -70,7 +93,7 @@ impl TagExecutor {
             event_publisher,
             parser,
             validators,
-            scaling, // pre-extracted above
+            scaling,
             reconnect_attempts: 0,
             cancel_token,
             connected_registry,
@@ -122,11 +145,8 @@ impl TagExecutor {
         self.tag.reset_timeout(); // Initialize timer to prevent immediate timeout
         self.reconnect_attempts = 0;
 
-        // Add to connected registry
-        {
-            let mut registry = self.connected_registry.lock().await;
-            registry.insert(self.tag.id().clone());
-        }
+        // Add to connected registry (DashSet handles concurrency internally)
+        self.connected_registry.insert(self.tag.id().clone());
 
         // Publish connection event
         let event = DomainEvent::tag_connected(self.tag.id().clone());
@@ -146,8 +166,7 @@ impl TagExecutor {
         self.tag.mark_offline();
 
         // Remove from connected registry
-        let mut registry = self.connected_registry.lock().await;
-        registry.remove(self.tag.id());
+        self.connected_registry.remove(self.tag.id());
     }
 
     /// Execute OnChange mode - event-driven reading
@@ -227,8 +246,8 @@ impl TagExecutor {
         loop {
             tokio::select! {
                 _ = self.cancel_token.cancelled() => {
-                     tracing::info!(tag_id = %self.tag.id(), "Shutdown signal received");
-                     return Ok(());
+                    tracing::info!(tag_id = %self.tag.id(), "Shutdown signal received");
+                    return Ok(());
                 }
                 _ = poll_interval.tick() => {
                     // Check if timed out (only if not already offline to avoid spam)
@@ -263,10 +282,7 @@ impl TagExecutor {
                                         tracing::warn!(error = %e, "Failed to publish value update");
                                     } else {
                                         // Re-add to registry in case it was timed out
-                                        {
-                                            let mut registry = self.connected_registry.lock().await;
-                                            registry.insert(self.tag.id().clone());
-                                        }
+                                        self.connected_registry.insert(self.tag.id().clone());
                                         tracing::info!(tag_id = %self.tag.id(), value = %value, "📥 Data received & saved");
                                     }
 
@@ -310,10 +326,7 @@ impl TagExecutor {
                         tracing::warn!(error = %e, "Failed to publish value update");
                     } else {
                         // Re-add to registry in case it was timed out
-                        {
-                            let mut registry = self.connected_registry.lock().await;
-                            registry.insert(self.tag.id().clone());
-                        }
+                        self.connected_registry.insert(self.tag.id().clone());
                         tracing::info!(tag_id = %self.tag.id(), value = %value, "📥 Data received & saved");
                     }
                 }
@@ -333,8 +346,7 @@ impl TagExecutor {
 
         // Mark as redundant in registry too?
         // If it's timed out, it's not "active" for data flow
-        let mut registry = self.connected_registry.lock().await;
-        registry.remove(self.tag.id());
+        self.connected_registry.remove(self.tag.id());
 
         let event = DomainEvent::tag_disconnected(
             self.tag.id().clone(),
@@ -492,13 +504,13 @@ mod tests {
     use domain::tag::{TagStatus, TagValueType};
     use domain::{DomainError, TagId};
     use serde_json::json;
-    use std::sync::Mutex;
+    // use std::sync::Mutex; // REMOVED
 
     // Mock driver for testing
     struct MockDriver {
         connected: bool,
         state: ConnectionState,
-        read_values: Mutex<Vec<Option<serde_json::Value>>>,
+        read_values: std::sync::Mutex<Vec<Option<serde_json::Value>>>,
         fail_next_read: bool,
     }
 
@@ -507,7 +519,7 @@ mod tests {
             Self {
                 connected: false,
                 state: ConnectionState::Disconnected,
-                read_values: Mutex::new(values),
+                read_values: std::sync::Mutex::new(values),
                 fail_next_read: false,
             }
         }
@@ -561,13 +573,13 @@ mod tests {
 
     // Mock event publisher
     struct MockEventPublisher {
-        events: Mutex<Vec<DomainEvent>>,
+        events: std::sync::Mutex<Vec<DomainEvent>>,
     }
 
     impl MockEventPublisher {
         fn new() -> Self {
             Self {
-                events: Mutex::new(Vec::new()),
+                events: std::sync::Mutex::new(Vec::new()),
             }
         }
 
@@ -583,6 +595,46 @@ mod tests {
             event: DomainEvent,
         ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             self.events.lock().unwrap().push(event);
+            Ok(())
+        }
+    }
+
+    // Mock Pipeline Factory
+    struct MockPipelineFactory;
+    impl PipelineFactory for MockPipelineFactory {
+        fn create_parser(
+            &self,
+            _config: &domain::tag::ParserConfig,
+        ) -> Result<Box<dyn ValueParser>, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(Box::new(MockParser))
+        }
+        fn create_validator(
+            &self,
+            _config: &domain::tag::ValidatorConfig,
+        ) -> Result<Box<dyn ValueValidator>, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(Box::new(MockValidator))
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockParser;
+    impl ValueParser for MockParser {
+        fn parse(
+            &self,
+            raw: &str,
+        ) -> std::result::Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>>
+        {
+            Ok(serde_json::json!(raw))
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockValidator;
+    impl ValueValidator for MockValidator {
+        fn validate(
+            &self,
+            _val: &serde_json::Value,
+        ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Ok(())
         }
     }
@@ -608,10 +660,11 @@ mod tests {
         let driver = Box::new(MockDriver::new(vec![]));
         let publisher = Arc::new(MockEventPublisher::new());
         let token = CancellationToken::new();
+        let factory = MockPipelineFactory; // NEW
 
-        let registry: Arc<tokio::sync::Mutex<HashSet<TagId>>> =
-            Arc::new(tokio::sync::Mutex::new(HashSet::new()));
-        let mut executor = TagExecutor::new(tag, driver, publisher.clone(), token, registry);
+        let registry: Arc<DashSet<TagId>> = Arc::new(DashSet::new());
+        let mut executor =
+            TagExecutor::new(tag, driver, publisher.clone(), &factory, token, registry);
 
         let result = executor.connect().await;
         assert!(result.is_ok());
@@ -630,10 +683,11 @@ mod tests {
         let driver = Box::new(MockDriver::new(vec![Some(test_value.clone())]));
         let publisher = Arc::new(MockEventPublisher::new());
         let token = CancellationToken::new();
+        let factory = MockPipelineFactory; // NEW
 
-        let registry: Arc<tokio::sync::Mutex<HashSet<TagId>>> =
-            Arc::new(tokio::sync::Mutex::new(HashSet::new()));
-        let mut executor = TagExecutor::new(tag, driver, publisher.clone(), token, registry);
+        let registry: Arc<DashSet<TagId>> = Arc::new(DashSet::new());
+        let mut executor =
+            TagExecutor::new(tag, driver, publisher.clone(), &factory, token, registry);
         executor.connect().await.unwrap();
 
         let result = executor.read_and_publish().await;
