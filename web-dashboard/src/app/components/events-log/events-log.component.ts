@@ -280,16 +280,9 @@ export class EventsLogComponent implements OnInit {
     });
   }
 
-  parseDate(date: any): any {
+  parseDate(date: any): string | null {
     if (!date) return null;
-    if (typeof date === 'string') {
-      let s = date.trim();
-      s = s.replace(/^(\d{4}-\d{2}-\d{2})\s+/, '$1T');
-      s = s.replace(/\s+/g, '');
-      s = s.replace(/([-+]\d{2}:\d{2}):\d{2}$/, '$1');
-      return s;
-    }
-    return date;
+    return new Date(date).toISOString(); // the pipe handles it
   }
 
   formatValue(val: any): string {

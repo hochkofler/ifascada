@@ -1,7 +1,7 @@
 agent_id = "test-agent-01"
 
 [mqtt]
-host = "192.168.103.70"
+host = "localhost"
 port = 1883
 status_topic = "scada/status"
 

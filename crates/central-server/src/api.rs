@@ -68,13 +68,17 @@ async fn get_all_tags(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             let list: Vec<_> = rows
                 .into_iter()
                 .map(|r| {
+                    let ts_str = r.last_update.as_ref().map(|t| {
+                        t.format(&time::format_description::well_known::Rfc3339)
+                            .unwrap_or_else(|_| t.to_string())
+                    });
                     json!({
                         "id": r.id,
                         "agent_id": r.edge_agent_id,
                         "value": r.last_value,
                         "quality": r.quality,
                         "status": r.status,
-                        "timestamp": r.last_update
+                        "timestamp": ts_str
                     })
                 })
                 .collect();
@@ -189,7 +193,7 @@ async fn get_report_details(
                 r#"
                 SELECT value, timestamp FROM report_items
                 WHERE report_id = $1
-                ORDER BY timestamp ASC
+                ORDER BY timestamp DESC
                 "#,
                 id
             )
@@ -201,9 +205,13 @@ async fn get_report_details(
                     ilist
                         .iter()
                         .map(|i| {
+                            let ts_str = i
+                                .timestamp
+                                .format(&time::format_description::well_known::Rfc3339)
+                                .unwrap_or_else(|_| i.timestamp.to_string());
                             json!({
                                 "value": i.value,
-                                "timestamp": i.timestamp
+                                "timestamp": ts_str
                             })
                         })
                         .collect::<Vec<_>>()
@@ -262,6 +270,7 @@ struct HistoryQuery {
     offset: Option<i64>,
     start: Option<String>,
     end: Option<String>,
+    order: Option<String>,
 }
 
 async fn get_tag_history(
@@ -271,6 +280,8 @@ async fn get_tag_history(
 ) -> impl IntoResponse {
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
+    let order = query.order.as_deref().unwrap_or("desc").to_lowercase();
+    let is_asc = order == "asc";
 
     // Common struct to unify return types from different sqlx macros
     struct HistoryRow {
@@ -281,101 +292,173 @@ async fn get_tag_history(
         created_at: Option<time::OffsetDateTime>,
     }
 
-    let history_result: Result<Vec<HistoryRow>, _> =
-        if let (Some(start), Some(end)) = (&query.start, &query.end) {
-            sqlx::query!(
-                r#"
-            SELECT id, value, quality, timestamp, created_at
-            FROM tag_events
-            WHERE tag_id = $1 AND timestamp >= $4::timestamptz AND timestamp <= $5::timestamptz
-            ORDER BY timestamp ASC
-            LIMIT $2 OFFSET $3
-            "#,
-                id,
-                limit,
-                offset,
-                start as &String,
-                end as &String
-            )
-            .fetch_all(&state.pool)
-            .await
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|r| HistoryRow {
-                        id: r.id,
-                        value: r.value,
-                        quality: r.quality,
-                        timestamp: r.timestamp,
-                        created_at: r.created_at,
-                    })
-                    .collect()
-            })
-        } else if let Some(start) = &query.start {
-            sqlx::query!(
-                r#"
-            SELECT id, value, quality, timestamp, created_at
-            FROM tag_events
-            WHERE tag_id = $1 AND timestamp >= $4::timestamptz
-            ORDER BY timestamp ASC
-            LIMIT $2 OFFSET $3
-            "#,
-                id,
-                limit,
-                offset,
-                start as &String
-            )
-            .fetch_all(&state.pool)
-            .await
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|r| HistoryRow {
-                        id: r.id,
-                        value: r.value,
-                        quality: r.quality,
-                        timestamp: r.timestamp,
-                        created_at: r.created_at,
-                    })
-                    .collect()
-            })
-        } else {
-            sqlx::query!(
-                r#"
-            SELECT id, value, quality, timestamp, created_at
-            FROM tag_events
-            WHERE tag_id = $1
-            ORDER BY timestamp DESC
-            LIMIT $2 OFFSET $3
-            "#,
-                id,
-                limit,
-                offset
-            )
-            .fetch_all(&state.pool)
-            .await
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|r| HistoryRow {
-                        id: r.id,
-                        value: r.value,
-                        quality: r.quality,
-                        timestamp: r.timestamp,
-                        created_at: r.created_at,
-                    })
-                    .collect()
-            })
-        };
+    let history_result: Result<Vec<HistoryRow>, _> = match (&query.start, &query.end) {
+        (Some(start), Some(end)) => {
+            if is_asc {
+                sqlx::query!(
+                    r#"
+                    SELECT id, value, quality, timestamp, created_at
+                    FROM tag_events
+                    WHERE tag_id = $1 AND timestamp >= $4::timestamptz AND timestamp <= $5::timestamptz
+                    ORDER BY timestamp ASC
+                    LIMIT $2 OFFSET $3
+                    "#,
+                    id, limit, offset, start as &String, end as &String
+                )
+                .fetch_all(&state.pool)
+                .await
+                .map(|rows| rows.into_iter().map(|r| HistoryRow { id: r.id, value: r.value, quality: r.quality, timestamp: r.timestamp, created_at: r.created_at }).collect())
+            } else {
+                sqlx::query!(
+                    r#"
+                    SELECT id, value, quality, timestamp, created_at
+                    FROM tag_events
+                    WHERE tag_id = $1 AND timestamp >= $4::timestamptz AND timestamp <= $5::timestamptz
+                    ORDER BY timestamp DESC
+                    LIMIT $2 OFFSET $3
+                    "#,
+                    id, limit, offset, start as &String, end as &String
+                )
+                .fetch_all(&state.pool)
+                .await
+                .map(|rows| rows.into_iter().map(|r| HistoryRow { id: r.id, value: r.value, quality: r.quality, timestamp: r.timestamp, created_at: r.created_at }).collect())
+            }
+        }
+        (Some(start), None) => {
+            if is_asc {
+                sqlx::query!(
+                    r#"
+                    SELECT id, value, quality, timestamp, created_at
+                    FROM tag_events
+                    WHERE tag_id = $1 AND timestamp >= $4::timestamptz
+                    ORDER BY timestamp ASC
+                    LIMIT $2 OFFSET $3
+                    "#,
+                    id,
+                    limit,
+                    offset,
+                    start as &String
+                )
+                .fetch_all(&state.pool)
+                .await
+                .map(|rows| {
+                    rows.into_iter()
+                        .map(|r| HistoryRow {
+                            id: r.id,
+                            value: r.value,
+                            quality: r.quality,
+                            timestamp: r.timestamp,
+                            created_at: r.created_at,
+                        })
+                        .collect()
+                })
+            } else {
+                sqlx::query!(
+                    r#"
+                    SELECT id, value, quality, timestamp, created_at
+                    FROM tag_events
+                    WHERE tag_id = $1 AND timestamp >= $4::timestamptz
+                    ORDER BY timestamp DESC
+                    LIMIT $2 OFFSET $3
+                    "#,
+                    id,
+                    limit,
+                    offset,
+                    start as &String
+                )
+                .fetch_all(&state.pool)
+                .await
+                .map(|rows| {
+                    rows.into_iter()
+                        .map(|r| HistoryRow {
+                            id: r.id,
+                            value: r.value,
+                            quality: r.quality,
+                            timestamp: r.timestamp,
+                            created_at: r.created_at,
+                        })
+                        .collect()
+                })
+            }
+        }
+        _ => {
+            if is_asc {
+                sqlx::query!(
+                    r#"
+                    SELECT id, value, quality, timestamp, created_at
+                    FROM tag_events
+                    WHERE tag_id = $1
+                    ORDER BY timestamp ASC
+                    LIMIT $2 OFFSET $3
+                    "#,
+                    id,
+                    limit,
+                    offset
+                )
+                .fetch_all(&state.pool)
+                .await
+                .map(|rows| {
+                    rows.into_iter()
+                        .map(|r| HistoryRow {
+                            id: r.id,
+                            value: r.value,
+                            quality: r.quality,
+                            timestamp: r.timestamp,
+                            created_at: r.created_at,
+                        })
+                        .collect()
+                })
+            } else {
+                sqlx::query!(
+                    r#"
+                    SELECT id, value, quality, timestamp, created_at
+                    FROM tag_events
+                    WHERE tag_id = $1
+                    ORDER BY timestamp DESC
+                    LIMIT $2 OFFSET $3
+                    "#,
+                    id,
+                    limit,
+                    offset
+                )
+                .fetch_all(&state.pool)
+                .await
+                .map(|rows| {
+                    rows.into_iter()
+                        .map(|r| HistoryRow {
+                            id: r.id,
+                            value: r.value,
+                            quality: r.quality,
+                            timestamp: r.timestamp,
+                            created_at: r.created_at,
+                        })
+                        .collect()
+                })
+            }
+        }
+    };
 
     match history_result {
         Ok(list) => {
             let history_json: Vec<_> = list
                 .iter()
                 .map(|r| {
+                    let ts_str = r
+                        .timestamp
+                        .format(&time::format_description::well_known::Rfc3339)
+                        .unwrap_or_else(|_| r.timestamp.to_string());
+
+                    let created_str = r.created_at.as_ref().map(|t| {
+                        t.format(&time::format_description::well_known::Rfc3339)
+                            .unwrap_or_else(|_| t.to_string())
+                    });
+
                     json!({
                         "id": r.id,
                         "value": r.value,
                         "quality": r.quality,
-                        "timestamp": r.timestamp,
-                        "created_at": r.created_at
+                        "timestamp": ts_str,
+                        "created_at": created_str
                     })
                 })
                 .collect();

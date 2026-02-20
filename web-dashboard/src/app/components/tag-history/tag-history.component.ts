@@ -14,7 +14,7 @@ Chart.register(...registerables);
   template: `
     <div class="history-card">
       <div class="history-header">
-        <h3>Trend: {{ tagId }}</h3>
+        <h3>Trend live: {{ tagId }}</h3>
         <button class="btn-close" (click)="onClose()">×</button>
       </div>
 
@@ -33,7 +33,7 @@ Chart.register(...registerables);
           </thead>
           <tbody>
             <tr *ngFor="let entry of history">
-              <td>{{ parseDate(entry.created_at) | date:'HH:mm:ss.SSS' }}</td>
+              <td>{{ parseDate(entry.timestamp) | date:'HH:mm:ss.SSS' }}</td>
               <td class="val-col">{{ formatValue(entry.value) }}</td>
               <td>
                 <span class="quality-badge" [class.good]="entry.quality === 'Good'">
@@ -192,7 +192,10 @@ export class TagHistoryComponent implements OnInit, OnChanges, OnDestroy, AfterV
     // but here we want chronological for the chart (left to right)
     const displayData = [...this.history].reverse();
 
-    this.chart.data.labels = displayData.map(h => new Date(h.created_at).toLocaleTimeString());
+    this.chart.data.labels = displayData.map(h => {
+      const parsed = this.parseDate(h.timestamp);
+      return parsed ? new Date(parsed).toLocaleTimeString() : 'Unknown';
+    });
     this.chart.data.datasets[0].data = displayData.map(h => this.extractNumericValue(h.value));
     this.chart.update('none'); // Update without animation for performance
   }
@@ -225,16 +228,9 @@ export class TagHistoryComponent implements OnInit, OnChanges, OnDestroy, AfterV
     return String(val);
   }
 
-  parseDate(date: any): any {
+  parseDate(date: any): string | null {
     if (!date) return null;
-    if (typeof date === 'string') {
-      let s = date.trim();
-      s = s.replace(/^(\d{4}-\d{2}-\d{2})\s+/, '$1T');
-      s = s.replace(/\s+/g, '');
-      s = s.replace(/([-+]\d{2}:\d{2}):\d{2}$/, '$1');
-      return s;
-    }
-    return date;
+    return new Date(date).toISOString();
   }
 
   onClose() {

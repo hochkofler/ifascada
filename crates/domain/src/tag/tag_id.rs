@@ -35,10 +35,9 @@ impl TagId {
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '/')
         {
-            return Err(DomainError::InvalidTagId(
-                "Tag ID must contain only alphanumeric, underscore, hyphen, and forward slash"
-                    .to_string(),
-            ));
+            return Err(DomainError::InvalidTagId(format!(
+                "Tag ID {id} must contain only alphanumeric, underscore, hyphen, and forward slash"
+            )));
         }
 
         Ok(Self(id))

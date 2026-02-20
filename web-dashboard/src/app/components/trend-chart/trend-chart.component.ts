@@ -23,7 +23,7 @@ export class TrendChartComponent implements OnInit, AfterViewInit, OnDestroy {
     // Controls
     startTime: string = '';
     endTime: string = '';
-    limit: number = 1000;
+    limit: number = 250;
 
     history: TagHistoryEntry[] = [];
     isLoading = false;
@@ -127,7 +127,18 @@ export class TrendChartComponent implements OnInit, AfterViewInit, OnDestroy {
                     legend: { display: true },
                     tooltip: {
                         mode: 'index',
-                        intersect: false
+                        intersect: false,
+                        callbacks: {
+                            title: (tooltipItems: any) => {
+                                const labels = tooltipItems[0].label;
+                                if (Array.isArray(labels)) {
+                                    return labels.join(' ');
+                                } else if (typeof labels === 'string') {
+                                    return labels.split(',').join(' ');
+                                }
+                                return labels;
+                            }
+                        }
                     }
                 },
                 interaction: {
@@ -159,20 +170,12 @@ export class TrendChartComponent implements OnInit, AfterViewInit, OnDestroy {
     updateChart() {
         if (!this.chart) return;
 
-        // Data is ASC from backend if range used.
-        // If not range, DESC. But we always set start/end in ngOnInit.
-        // However, if fetchHistory is called, we pass them.
+        // Data is DESC from backend by default.
+        // We want chronological for the chart (left to right)
+        const displayData = [...this.history].reverse();
 
-        // We assume data matches the order we want (ASC).
-
-        const labels = this.history.map(h => {
-            const d = new Date(h.created_at || h.timestamp);
-            // Backend returns `timestamp` (OffsetDateTime). `created_at` might be null.
-            // Use `timestamp` preferably.
-            return d.toLocaleString();
-        });
-
-        const dataPoints = this.history.map(h => this.extractNumericValue(h.value));
+        const labels = displayData.map(h => this.formatDateMultiLine(h.timestamp || h.created_at));
+        const dataPoints = displayData.map(h => this.extractNumericValue(h.value));
 
         this.chart.data.labels = labels;
         this.chart.data.datasets[0].label = this.selectedTagId;
@@ -190,6 +193,22 @@ export class TrendChartComponent implements OnInit, AfterViewInit, OnDestroy {
             if ('value' in val) return this.extractNumericValue(val.value);
         }
         return 0;
+    }
+
+    private formatDateMultiLine(val: any): string[] {
+        if (!val) return ['Unknown'];
+        let d = new Date(val);
+        if (isNaN(d.getTime()) && typeof val === 'string') {
+            if (/^\d+$/.test(val)) {
+                d = new Date(parseInt(val, 10));
+            } else {
+                d = new Date(val.replace(' ', 'T'));
+            }
+        }
+        if (isNaN(d.getTime())) {
+            return [String(val)];
+        }
+        return [d.toLocaleDateString(), d.toLocaleTimeString()];
     }
 
     private toDateTimeLocal(date: Date): string {

@@ -6,42 +6,56 @@
         "baud_rate": 9600,
         "data_bits": 8,
         "parity": "None",
-        "port": "COM7",
+        "port": "COM10",
+        "slave_id": 100,
         "stop_bits": 1,
-        "timeout_ms": 500
+        "timeout_ms": 3000
       },
-      "driver": "RS232",
+      "driver": "Modbus",
       "enabled": true,
-      "id": "scale_01"
+      "id": "Contador de particulas"
     }
   ],
   "heartbeat_interval_secs": 30,
   "tags": [
     {
       "automations": [],
-      "device_id": "scale_01",
+      "device_id": "Contador de particulas",
       "driver": null,
-      "driver_config": {},
-      "enabled": true,
-      "id": "weigh_scale01",
-      "pipeline": {
-        "automations": [],
-        "parser": {
-          "config": null,
-          "name": "ScaleParser",
-          "type": "Custom"
-        },
-        "scaling": null,
-        "validators": []
+      "driver_config": {
+        "count": 1,
+        "register": 11,
+        "register_type": "Input"
       },
+      "enabled": true,
+      "id": "Particle05",
+      "pipeline": null,
       "update_mode": {
-        "debounce_ms": 500,
-        "timeout_ms": 3000,
-        "type": "OnChange"
+        "interval_ms": 5000,
+        "type": "Polling"
       },
       "value_schema": null,
-      "value_type": "Composite"
+      "value_type": "Simple"
+    },
+    {
+      "automations": [],
+      "device_id": "Contador de particulas",
+      "driver": null,
+      "driver_config": {
+        "count": 1,
+        "register": 9,
+        "register_type": "Input"
+      },
+      "enabled": true,
+      "id": "Particle03",
+      "pipeline": null,
+      "update_mode": {
+        "interval_ms": 5000,
+        "type": "Polling"
+      },
+      "value_schema": null,
+      "value_type": "Simple"
     }
   ],
-  "version": "3e22391e-bf1c-4c00-8efe-c8ca37930fd5"
+  "version": "ead0d06b-f49a-4021-a7cb-ff1a5251da3b"
 }
