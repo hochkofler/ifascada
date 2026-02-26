@@ -1,0 +1,81 @@
+{
+  "connections": [
+    {
+      "id": "conn_modbus_rtu_com10_1",
+      "name": "Modbus RTU COM10 Bus",
+      "driver_type": "ModbusRTU",
+      "timeout_ms": 1500,
+      "reconnect_delay_ms": 1000,
+      "max_retries": null,
+      "transport": {
+        "serial": {
+          "port": "COM10",
+          "baud_rate": 9600,
+          "data_bits": 8,
+          "stop_bits": 1,
+          "parity": "N"
+        },
+        "device_unit_map": {
+          "dev_modbus_rtu_50": 50,
+          "dev_modbus_rtu_100": 100,
+          "dev_modbus_rtu_70": 70
+        },
+        "request_timeout_ms": 1500,
+        "request_retries": 1,
+        "retry_backoff_ms": 100,
+        "retry_backoff_mode": "fixed",
+        "max_batch_registers": 120,
+        "max_batch_bits": 2000,
+        "max_register_gap": 2,
+        "max_bit_gap": 8
+      },
+      "tags": [
+        {
+          "id": "tag_modbus_rtu_50_status",
+          "name": "RTU 50 Status",
+          "device_id": "dev_modbus_rtu_50",
+          "source": "hr:0:u16",
+          "value_type": "integer",
+          "update_mode": "polling",
+          "interval_ms": 500
+        },
+        {
+          "id": "tag_airborne_particle_pm1",
+          "name": "Airborne PM1",
+          "device_id": "dev_modbus_rtu_100",
+          "source": "hr:10:f32",
+          "value_type": "float",
+          "update_mode": "polling",
+          "interval_ms": 500
+        },
+        {
+          "id": "tag_airborne_particle_pm25",
+          "name": "Airborne PM2_5",
+          "device_id": "dev_modbus_rtu_100",
+          "source": "hr:12:f32",
+          "value_type": "float",
+          "update_mode": "polling",
+          "interval_ms": 500
+        },
+        {
+          "id": "tag_airborne_particle_pm10",
+          "name": "Airborne PM10",
+          "device_id": "dev_modbus_rtu_100",
+          "source": "hr:14:f32",
+          "value_type": "float",
+          "update_mode": "polling",
+          "interval_ms": 500
+        },
+        {
+          "id": "tag_modbus_rtu_70_status",
+          "name": "RTU 70 Status",
+          "device_id": "dev_modbus_rtu_70",
+          "source": "hr:0:u16",
+          "value_type": "integer",
+          "update_mode": "polling",
+          "interval_ms": 500
+        }
+      ]
+    }
+  ]
+}

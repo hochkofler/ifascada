@@ -1,0 +1,24 @@
+[package]
+name = "edge-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+domain = { path = "../domain" }
+application = { path = "../application" }
+infrastructure = { path = "../infrastructure" }
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rumqttc = "0.24"
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+aes-gcm = "0.10"
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }

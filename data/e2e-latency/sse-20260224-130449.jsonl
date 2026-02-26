@@ -1,0 +1,5 @@
+{"recv_ts_ms": 1771952690487, "published_at": "2026-02-24T17:04:50.298729Z", "payload_ts": "2026-02-24T17:04:50.298729500Z", "raw": "+ 23.1000 g", "tag_id": "tag_scale_manual_compound"}
+{"recv_ts_ms": 1771952691461, "published_at": "2026-02-24T17:04:51.303582Z", "payload_ts": "2026-02-24T17:04:51.303582900Z", "raw": "+ 23.1110 g", "tag_id": "tag_scale_manual_compound"}
+{"recv_ts_ms": 1771952692431, "published_at": "2026-02-24T17:04:52.305517Z", "payload_ts": "2026-02-24T17:04:52.305517800Z", "raw": "+ 23.1220 g", "tag_id": "tag_scale_manual_compound"}
+{"recv_ts_ms": 1771952693400, "published_at": "2026-02-24T17:04:53.305355Z", "payload_ts": "2026-02-24T17:04:53.305355300Z", "raw": "+ 23.1330 g", "tag_id": "tag_scale_manual_compound"}
+{"recv_ts_ms": 1771952694369, "published_at": "2026-02-24T17:04:54.304028Z", "payload_ts": "2026-02-24T17:04:54.304028100Z", "raw": "+ 23.1440 g", "tag_id": "tag_scale_manual_compound"}

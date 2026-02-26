@@ -1,0 +1,64 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: ifascada-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rustscada
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "55432:5432"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+      - ./crates/central-server/migrations/0001_core_postgres.sql:/docker-entrypoint-initdb.d/0001_core_postgres.sql:ro
+      - ./crates/central-server/migrations/0002_timescale_historian.sql:/docker-entrypoint-initdb.d/0002_timescale_historian.sql:ro
+      - ./crates/central-server/migrations/0003_tag_naming_governance.sql:/docker-entrypoint-initdb.d/0003_tag_naming_governance.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d rustscada -h 127.0.0.1 -p 5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: ifascada-redis
+    restart: unless-stopped
+    ports:
+      - "56379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: ifascada-mosquitto
+    restart: unless-stopped
+    ports:
+      - "51883:1883"
+    volumes:
+      - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ifascada-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@ifascada.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "58080:80"
+    depends_on:
+      - timescaledb
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+volumes:
+  timescaledb_data:
+  redis_data:
+  mosquitto_data:
+  mosquitto_log:
+  pgadmin_data:

@@ -1,0 +1,28 @@
+{
+  "connections": [
+    {
+      "id": "conn_sim_mix_2",
+      "name": "Simulator Mix 2",
+      "driver_type": "Simulator",
+      "timeout_ms": 500,
+      "reconnect_delay_ms": 1000,
+      "max_retries": null,
+      "transport": {
+        "tag_ids": [
+          "tag_m2_t001",
+          "tag_m2_t002",
+          "tag_m2_t003",
+          "tag_m2_t004",
+          "tag_m2_t005"
+        ]
+      },
+      "tags": [
+        { "id": "tag_m2_t001", "name": "Mix2 T001", "device_id": "dev-mix-2", "source": "sim:1", "value_type": "float", "update_mode": "polling", "interval_ms": 500 },
+        { "id": "tag_m2_t002", "name": "Mix2 T002", "device_id": "dev-mix-2", "source": "sim:2", "value_type": "float", "update_mode": "polling", "interval_ms": 500 },
+        { "id": "tag_m2_t003", "name": "Mix2 T003", "device_id": "dev-mix-2", "source": "sim:3", "value_type": "float", "update_mode": "polling", "interval_ms": 500 },
+        { "id": "tag_m2_t004", "name": "Mix2 T004", "device_id": "dev-mix-2", "source": "sim:4", "value_type": "float", "update_mode": "polling", "interval_ms": 500 },
+        { "id": "tag_m2_t005", "name": "Mix2 T005", "device_id": "dev-mix-2", "source": "sim:5", "value_type": "float", "update_mode": "polling", "interval_ms": 500 }
+      ]
+    }
+  ]
+}

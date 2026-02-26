@@ -1,0 +1,10 @@
+C:\ifascada\target_tdd\debug\deps\writeable-aed5f2de6026e98c.d: C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\lib.rs C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\cmp.rs C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\impls.rs C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\ops.rs C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\parts_write_adapter.rs C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\try_writeable.rs
+
+C:\ifascada\target_tdd\debug\deps\libwriteable-aed5f2de6026e98c.rmeta: C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\lib.rs C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\cmp.rs C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\impls.rs C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\ops.rs C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\parts_write_adapter.rs C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\try_writeable.rs
+
+C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\lib.rs:
+C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\cmp.rs:
+C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\impls.rs:
+C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\ops.rs:
+C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\parts_write_adapter.rs:
+C:\Users\MATHIASHA\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\try_writeable.rs:

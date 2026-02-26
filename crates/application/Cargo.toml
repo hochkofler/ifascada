@@ -1,0 +1,19 @@
+[package]
+name = "application"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+domain = { path = "../domain" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1.0", features = ["full"] }
+dashmap = "5.5"
+tracing = "0.1"
+async-trait = "0.1"
+anyhow = "1.0"
+
+[dev-dependencies]
+infrastructure = { path = "../infrastructure" }
+tokio = { version = "1.0", features = ["full", "test-util"] }

@@ -1,0 +1,85 @@
+services:
+  edge-sim-pack-1:
+    build:
+      context: .
+      dockerfile: docker/edge-agent.Dockerfile
+    container_name: ifascada-edge-sim-pack-1
+    restart: unless-stopped
+    environment:
+      EDGE_MQTT_ENABLED: "true"
+      EDGE_SITE: "plant-a"
+      EDGE_AGENT: "edge-pack-1"
+      MQTT_CLIENT_ID: "edge-sim-pack-1"
+      MQTT_HOST: "ifascada-mosquitto"
+      MQTT_PORT: "1883"
+      EDGE_BOOTSTRAP_PATH: "/app/config/bootstrap.sim.edge-pack-1.json"
+      RUST_LOG: "info"
+    networks:
+      - scada_net
+    volumes:
+      - ./crates/edge-agent/config/bootstrap.sim.edge-pack-1.json:/app/config/bootstrap.sim.edge-pack-1.json:ro
+
+  edge-sim-pack-2:
+    build:
+      context: .
+      dockerfile: docker/edge-agent.Dockerfile
+    container_name: ifascada-edge-sim-pack-2
+    restart: unless-stopped
+    environment:
+      EDGE_MQTT_ENABLED: "true"
+      EDGE_SITE: "plant-a"
+      EDGE_AGENT: "edge-pack-2"
+      MQTT_CLIENT_ID: "edge-sim-pack-2"
+      MQTT_HOST: "ifascada-mosquitto"
+      MQTT_PORT: "1883"
+      EDGE_BOOTSTRAP_PATH: "/app/config/bootstrap.sim.edge-pack-2.json"
+      RUST_LOG: "info"
+    networks:
+      - scada_net
+    volumes:
+      - ./crates/edge-agent/config/bootstrap.sim.edge-pack-2.json:/app/config/bootstrap.sim.edge-pack-2.json:ro
+
+  edge-sim-mix-1:
+    build:
+      context: .
+      dockerfile: docker/edge-agent.Dockerfile
+    container_name: ifascada-edge-sim-mix-1
+    restart: unless-stopped
+    environment:
+      EDGE_MQTT_ENABLED: "true"
+      EDGE_SITE: "plant-a"
+      EDGE_AGENT: "edge-mix-1"
+      MQTT_CLIENT_ID: "edge-sim-mix-1"
+      MQTT_HOST: "ifascada-mosquitto"
+      MQTT_PORT: "1883"
+      EDGE_BOOTSTRAP_PATH: "/app/config/bootstrap.sim.edge-mix-1.json"
+      RUST_LOG: "info"
+    networks:
+      - scada_net
+    volumes:
+      - ./crates/edge-agent/config/bootstrap.sim.edge-mix-1.json:/app/config/bootstrap.sim.edge-mix-1.json:ro
+
+  edge-sim-mix-2:
+    build:
+      context: .
+      dockerfile: docker/edge-agent.Dockerfile
+    container_name: ifascada-edge-sim-mix-2
+    restart: unless-stopped
+    environment:
+      EDGE_MQTT_ENABLED: "true"
+      EDGE_SITE: "plant-a"
+      EDGE_AGENT: "edge-mix-2"
+      MQTT_CLIENT_ID: "edge-sim-mix-2"
+      MQTT_HOST: "ifascada-mosquitto"
+      MQTT_PORT: "1883"
+      EDGE_BOOTSTRAP_PATH: "/app/config/bootstrap.sim.edge-mix-2.json"
+      RUST_LOG: "info"
+    networks:
+      - scada_net
+    volumes:
+      - ./crates/edge-agent/config/bootstrap.sim.edge-mix-2.json:/app/config/bootstrap.sim.edge-mix-2.json:ro
+
+networks:
+  scada_net:
+    external: true
+    name: ifascada_default

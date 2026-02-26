@@ -1,0 +1,55 @@
+{
+  "connections": [
+    {
+      "id": "conn_scale_rs232_1",
+      "name": "Scale RS232 Demo",
+      "driver_type": "SerialAscii",
+      "timeout_ms": 200,
+      "reconnect_delay_ms": 1000,
+      "max_retries": null,
+      "transport": {
+        "serial": {
+          "port": "COM7",
+          "baud_rate": 9600,
+          "data_bits": 8,
+          "stop_bits": 1,
+          "parity": "N"
+        },
+        "frame": {
+          "mode": "line",
+          "terminator": "\r\n",
+          "max_len": 128
+        },
+        "parser": {
+          "regex": "^\\s*([+-])?\\s*(\\d+(?:\\.\\d+)?)\\s*([A-Za-z]+)\\s*$",
+          "sign_group": 1,
+          "value_group": 2,
+          "unit_group": 3
+        },
+        "read_timeout_ms": 30,
+        "tag_map": {
+          "tag_scale_compound": "scale:compound",
+          "tag_scale_raw": "scale:raw"
+        }
+      },
+      "tags": [
+        {
+          "id": "tag_scale_compound",
+          "name": "Scale Compound",
+          "device_id": "dev_scale_1",
+          "source": "scale:compound",
+          "value_type": "string",
+          "update_mode": "on_change"
+        },
+        {
+          "id": "tag_scale_raw",
+          "name": "Scale Raw",
+          "device_id": "dev_scale_1",
+          "source": "scale:raw",
+          "value_type": "string",
+          "update_mode": "on_change"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "edge_id": "edge-01",
+  "version": 1,
+  "issued_at": "2026-02-22T01:14:57.095867100Z",
+  "algorithm": "hmac-sha256",
+  "key_id": "v1",
+  "payload_json": "{\n  \"connections\": [\n    {\n      \"id\": \"conn_modbus_tcp_1\",\n      \"name\": \"Modbus TCP Demo\",\n      \"driver_type\": \"ModbusTCP\",\n      \"timeout_ms\": 1500,\n      \"reconnect_delay_ms\": 1000,\n      \"max_retries\": 5,\n      \"transport\": {\n        \"host\": \"127.0.0.1\",\n        \"port\": 502,\n        \"unit_id\": 1,\n        \"connect_timeout_ms\": 2000,\n        \"request_timeout_ms\": 1500,\n        \"request_retries\": 1,\n        \"retry_backoff_ms\": 100,\n        \"max_batch_registers\": 120,\n        \"max_batch_bits\": 2000\n      },\n      \"tags\": [\n        {\n          \"id\": \"tag_hr_0\",\n          \"name\": \"Holding 0 U16\",\n          \"device_id\": \"dev_modbus_1\",\n          \"source\": \"hr:0:u16\",\n          \"value_type\": \"integer\",\n          \"update_mode\": \"polling\",\n          \"interval_ms\": 500\n        },\n        {\n          \"id\": \"tag_hr_2_f32\",\n          \"name\": \"Holding 2 F32\",\n          \"device_id\": \"dev_modbus_1\",\n          \"source\": \"hr:2:f32\",\n          \"value_type\": \"float\",\n          \"update_mode\": \"polling\",\n          \"interval_ms\": 500\n        },\n        {\n          \"id\": \"tag_hr_10_cmd\",\n          \"name\": \"Holding 10 Command\",\n          \"device_id\": \"dev_modbus_1\",\n          \"source\": \"hr:10:u16\",\n          \"value_type\": \"integer\",\n          \"update_mode\": \"polling\",\n          \"interval_ms\": 500\n        },\n        {\n          \"id\": \"tag_hr_11_cmd\",\n          \"name\": \"Holding 11 Command\",\n          \"device_id\": \"dev_modbus_1\",\n          \"source\": \"hr:11:u16\",\n          \"value_type\": \"integer\",\n          \"update_mode\": \"polling\",\n          \"interval_ms\": 500\n        }\n      ]\n    }\n  ]\n}\n",
+  "payload_hash_hex": "2cd8f1a20a50bcc319797f3317f3f0a2269bf115093fd1515ea5fc81eb61c202",
+  "signature_hex": "8c956a651fcab3d98d612b171ef8a3c32b413095be896ab435e74cb1e77ca252"
+}

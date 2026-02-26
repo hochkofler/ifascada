@@ -1,0 +1,247 @@
+# Informe de Evaluación: Aplicación Moderna vs. Legacy
+
+## Resumen Ejecutivo
+
+La versión moderna (`crates/`) representa una evolución significativa sobre `legacy/`. El runtime de conexiones es considerablemente más robusto. Sin embargo, hay casos de uso completos del legacy que aún no están implementados en la versión moderna (printer, pipeline tag, command listener), y se identificaron varios problemas de diseño en ambas versiones.
+
+---
+
+## 1. Comparación de Arquitectura General
+
+```mermaid
+graph LR
+  subgraph Legacy
+    A[domain\nautomation, event, driver] --> B[application\nruntime, tag, messaging,\nprinter, connection]
+    B --> C[infrastructure\ndrivers, database,\nmessaging, pipeline]
+    C --> D[edge-agent\nmain.rs, config_manager]
+  end
+  subgraph Moderno
+    E[domain\nautomation, connection,\ndevice, tag, driver] --> F[application\nruntime, automation]
+    F --> G[infrastructure\ndrivers, repositories]
+    G --> H[edge-agent\nmain, bootstrap,\nmqtt_bridge, mqtt_outbox]
+  end
+```
+
+| Aspecto | Legacy | Moderno |
+|---|---|---|
+| Casos de uso en application | 6 módulos | 2 módulos |
+| Runtime de conexiones | 120 líneas, básico | 778 líneas, production-grade |
+| Fila de escritura con prioridad | ❌ | ✅ |
+| Circuit breaker de escritura | ❌ | ✅ |
+| Rate limiting por tag | ❌ | ✅ |
+| Deduplicación de comandos | ❌ | ✅ |
+| Reconexión exponencial backoff | Manual en TagExecutor | ✅ en ConnectionRuntime |
+| Outbox MQTT store-and-forward | ❌ | ✅ (24KB [mqtt_outbox.rs](file:///c:/ifascada/crates/edge-agent/src/mqtt_outbox.rs)) |
+| Printer use case | ✅ PrinterManager | ❌ **FALTANTE** |
+| Command listener MQTT | ✅ CommandListener | ❌ **FALTANTE** (absorbido en mqtt_bridge) |
+| TagPipeline (parse/validate/scale) | ✅ | ❌ **FALTANTE** |
+| DomainEvent en domain layer | ✅ | ❌ Eliminado |
+| EventPublisher port en domain | ✅ | ❌ Eliminado |
+| Tests en TagExecutor | ✅ 2 tests | N/A (rediseñado) |
+| Tests en AutomationEngine | Ausentes | ✅ 3 tests |
+
+---
+
+## 2. Casos de Uso: Cobertura Comparativa
+
+### 2.1 Presentes en Legacy, Ausentes en la versión Moderna
+
+#### 🔴 CRÍTICO: [PrinterManager](file:///c:/ifascada/legacy/crates/application/src/printer/manager.rs#6-11) y [PrintingActionExecutor](file:///c:/ifascada/legacy/crates/application/src/automation/executor.rs#57-64) (faltante)
+- **Legacy**: `application/printer/manager.rs` + `application/automation/executor.rs`
+- **Moderno**: La [AutomationEngine](file:///c:/ifascada/crates/application/src/automation/engine.rs#27-32) emite [ActionRequest](file:///c:/ifascada/crates/application/src/automation/engine.rs#16-26) pero **no hay ningún actor que ejecute la acción `print.escpos`**. El módulo de impresión fue eliminado sin reemplazo funcional.
+- **Impacto**: Las automatizaciones de impresión de tickets no funcionan.
+
+#### 🔴 CRÍTICO: `TagPipeline` (faltante)
+- **Legacy**: `application/tag/tag_pipeline.rs` (4.5KB) con lógica de `Parser → Validator → Scaler`
+- **Moderno**: [ConnectionRuntime](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs#37-56) llama a `tag_state.runtime.process_raw_value()` pero [TagRuntime](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs#57-65) es una estructura simple. No existe transformación/validación de datos comparable.
+- **Impacto**: Datos crudos del driver se publican sin normalización ni validación de rango.
+
+#### 🟡 IMPORTANTE: [CommandListener](file:///c:/ifascada/legacy/crates/application/src/messaging/command_listener.rs#10-15) embebido en `application/messaging`
+- **Legacy**: [CommandListener](file:///c:/ifascada/legacy/crates/application/src/messaging/command_listener.rs#10-15) es un use case de aplicación con interfaz sobre un puerto (`MqttClient`), separado del runtime.
+- **Moderno**: La lógica equivalente está incrustada directamente en [mqtt_bridge.rs](file:///c:/ifascada/crates/edge-agent/src/mqtt_bridge.rs) (100KB), mezclando MQTT transport y lógica de negocio.
+
+#### 🟡 IMPORTANTE: `DomainEvent` y [EventPublisher](file:///c:/ifascada/legacy/crates/application/src/tag/tag_executor.rs#482-485) en domain layer
+- **Legacy**: El dominio define `DomainEvent` (con variantes `TagConnected`, `TagValueUpdated`, `TagError`, `ReportCompleted`) y el port [EventPublisher](file:///c:/ifascada/legacy/crates/application/src/tag/tag_executor.rs#482-485).
+- **Moderno**: Esta abstracción fue eliminada. Los eventos se publican directamente a través del `EventBus` en la capa de aplicación. El dominio no puede describir sus propios eventos.
+
+### 2.2 Mejoras reales en la versión Moderna
+
+#### ✅ Write Command Governance completa (UC más maduro)
+El [ConnectionRuntime](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs#37-56) moderno implementa:
+- **Priority queue**: `pending_writes_high` antes de `pending_writes_normal` (VecDeque)
+- **Idempotency dedup**: [seen_write_commands](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs#741-746) con ventana de tiempo configurable (`command_dedup_ms`)
+- **Rate limiting**: `write_rate_limit_ms` por tag ID
+- **Circuit breaker**: [write_circuit_fail_threshold](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs#697-706) + `write_circuit_cooldown_ms`
+- **Audit trail completo**: `WriteAuditRepository` con outcomes `Applied | Deduplicated | Rejected`
+- **Reconexión configurable**: `ReconnectStrategy::Fixed` y `ReconnectStrategy::Exponential`
+
+El legacy **no tiene ninguno** de estos mecanismos.
+
+#### ✅ AutomationEngine con scope routing
+El moderno [AutomationEngine](file:///c:/ifascada/crates/application/src/automation/engine.rs#27-32) soporta `Edge | Central | Auto` scope por acción — el legacy no tiene esta separación.
+
+#### ✅ MQTT Outbox (store-and-forward)
+[mqtt_outbox.rs](file:///c:/ifascada/crates/edge-agent/src/mqtt_outbox.rs) provee durabilidad ante caídas del broker — el legacy pierde mensajes si el broker no está disponible.
+
+---
+
+## 3. Errores y Problemas Identificados
+
+### En la versión Moderna (`crates/`)
+
+#### 🔴 E01 — [mqtt_bridge.rs](file:///c:/ifascada/crates/edge-agent/src/mqtt_bridge.rs) es un God Object (100KB, ~2500+ líneas)
+- **Archivo**: [crates/edge-agent/src/mqtt_bridge.rs](file:///c:/ifascada/crates/edge-agent/src/mqtt_bridge.rs)
+- **Problema**: Un solo archivo combina gestión de sesión MQTT, subscripción a tópicos, deserialización de mensajes, routing a múltiples use cases (alertas, configuración, telemetría, comandos), y publicación. Viola SRP y hace el código imposible de testear en aislamiento.
+- **Riesgo**: Alto. Cualquier bug en la lógica MQTT afecta todas las funciones del agente.
+
+#### 🔴 E02 — `pub use automation::*` exporta todo sin límite
+- **Archivo**: [crates/application/src/lib.rs](file:///c:/ifascada/crates/application/src/lib.rs), línea 4
+- **Problema**: `pub use automation::*` es una wildcard export que expone todo el módulo `automation` públicamente. Rompe el encapsulamiento y hace difícil rastrear la API pública.
+
+#### 🟡 E03 — [start_connection](file:///c:/ifascada/crates/application/src/runtime/runtime_engine.rs#80-120) silencia reconexiones duplicadas
+- **Archivo**: [crates/application/src/runtime/runtime_engine.rs](file:///c:/ifascada/crates/application/src/runtime/runtime_engine.rs), línea 87-88
+- **Código**: `if self.connections.contains_key(&conn_id) { return Ok(()); }`
+- **Problema**: Si una conexión ya existe, se retorna Ok sin notificar al caller. Si el caller llama de nuevo con una configuración diferente, se ignoran silenciosamente los cambios.
+
+#### 🟡 E04 — [evaluate_timeouts](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs#437-478) no evalúa tags `OnChange`/`OnMessage`
+- **Archivo**: [crates/application/src/runtime/connection_runtime.rs](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs), líneas 443-451
+- **Problema**: Los tags con `OnChange`/`OnMessage` están explícitamente excluidos del timeout. Un tag `OnMessage` que dejó de llegar datos podría quedar indefinidamente en estado `Good` sin transición a `Bad`.
+- **Comentario en código**: "Event-driven tags may legitimately stay silent for long periods" — esto es correcto para OnChange pero cuestionable para Polling tags que también dependen de OnMessage.
+
+#### 🟡 E05 — [command_dedup_window](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs#664-674) lee de `transport` config con fallback hardcoded
+- **Archivo**: [crates/application/src/runtime/connection_runtime.rs](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs), líneas 664-673
+- **Problema**: La ventana de dedup se lee de `connection.config.transport["command_dedup_ms"]`. Si el operador no lo configura, el fallback es `30_000 ms`. No hay ninguna validación ni advertencia sobre el valor por defecto. Un valor incorrecto puede aceptar comandos duplicados o rechazar comandos legítimos.
+
+#### 🟡 E06 — [write_circuit_fail_threshold](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs#697-706) con valor 0 desactiva el circuit breaker silenciosamente
+- **Archivo**: [crates/application/src/runtime/connection_runtime.rs](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs), líneas 697-705 y 729-739
+- **Problema**: Si [write_circuit_fail_threshold](file:///c:/ifascada/crates/application/src/runtime/connection_runtime.rs#697-706) vale 0 (no configurado), el circuit breaker nunca se activa. No hay log ni advertencia de que el circuit breaker está desactivado.
+
+#### 🟢 E07 — Ausencia de doc-comments en [lib.rs](file:///c:/ifascada/crates/domain/src/lib.rs) del `application` crate
+- **Archivo**: [crates/application/src/lib.rs](file:///c:/ifascada/crates/application/src/lib.rs)
+- **Problema**: El crate `application` tiene solo 6 líneas sin ninguna documentación. El legacy tiene una cabecera completa explicando el propósito del crate.
+
+### En Legacy (`legacy/crates/`)
+
+#### 🔴 L01 — `CommandListener` depende directamente de `infrastructure::MqttClient`
+- **Archivo**: `legacy/crates/application/src/messaging/command_listener.rs`, línea 4
+- **Código**: `use infrastructure::MqttClient;`
+- **Problema**: La capa de aplicación importa directamente una implementación concreta de infraestructura. Viola Hexagonal Architecture. El legacy declara seguir este patrón pero aquí lo rompe claramente.
+
+#### 🔴 L02 — `TagExecutor::reconnect` tiene lógica muerta ("si llegamos a 10, return Ok()")
+- **Archivo**: `legacy/crates/application/src/tag/tag_executor.rs`, líneas 378-389
+- **Problema**: El `if self.reconnect_attempts >= 10` retorna `Ok(())` en ambas ramas (con error y sin error). El comentario dice "keep retrying forever" pero la lógica es confusa y no diferencia entre intentos exitosos y fallidos después del umbral.
+
+#### 🔴 L03 — `PrinterManager::connect_loop` retry infinito sin backoff exponencial
+- **Archivo**: `legacy/crates/application/src/printer/manager.rs`, líneas 62-83
+- **Problema**: El `connect_loop` usa siempre `reconnect_interval = 5s` fijo, sin aumento exponencial. En caso de falla prolongada de la impresora, el sistema intentará conectarse cada 5 segundos indefinidamente, lo que puede generar spam de logs.
+
+#### 🔴 L04 — `PrinterManager` descarta trabajos de impresión sin persisterlos
+- **Archivo**: `legacy/crates/application/src/printer/manager.rs`, línea 49
+- **Código**: `warn!("⚠️ Printer disconnected. Dropping job...")`
+- **Problema**: Si la impresora está desconectada, el job se descarta permanentemente. No hay outbox o queue persistente para jobs de impresión.
+
+#### 🟡 L05 — `execute_polling_on_change` y `change_threshold` solo aplica a valores numéricos
+- **Archivo**: `legacy/crates/application/src/tag/tag_executor.rs`, líneas 237-244
+- **Problema**: El `change_threshold` no aplica a valores no numéricos (siempre publica). El nombre del mode implica que el cambio se detecta para cualquier tipo de valor, pero la implementación solo valida la lógica de threshold para `f64`.
+
+#### 🟡 L06 — `automation/executor.rs` tiene `runtime.zip` residual en `application/src/`
+- **Archivo**: `legacy/crates/application/src/runtime.zip`
+- **Problema**: Archivo ZIP residual en el código fuente. No debería estar en el repositorio.
+
+---
+
+## 4. Mejoras Propuestas
+
+### Prioridad Alta
+
+#### M01 — Descomponer `mqtt_bridge.rs` en use cases separados
+El archivo de 100KB debe partirse al menos en:
+- `AlertHandler` — procesa alertas y ACKs
+- `ConfigApplier` — aplica configuración recibida del central
+- `TelemetryPublisher` — publica telemetría de tags
+- `WriteCommandDispatcher` — despacha comandos de escritura al `RuntimeEngine`
+
+Cada uno debería ser un struct que implemente un trait de puerto, testeable de forma independiente.
+
+#### M02 — Reimplementar `TagPipeline` en la capa de aplicación
+El `ConnectionRuntime` moderno llama a `process_raw_value()` directamente, sin pipeline configurable. Se propone crear un `TagPipelinePort` (trait en domain) y una implementación en `infrastructure` equivalente a la del legacy:
+- `ValueParser` → convierte raw bytes/JSON en `TagValue`
+- `ValueValidator` → valida rangos / tipos
+- `ValueScaler` → aplica factor / offset
+
+#### M03 — Restaurar `ActionExecutor` como port en application
+El `AutomationEngine` moderno emite `ActionRequest` correctamente, pero no existe ningún `ActionExecutor` que procese esas solicitudes. Proponer:
+- Trait `ActionExecutor` en `application`
+- Implementación `PrintEscposExecutor` en `edge-agent` o `infrastructure`
+- Registro en `bootstrap.rs` para enganchar automaton engine → executor
+
+#### M04 — Extraer `CommandListener` como use case en `application`
+Crear un `WriteCommandListener` con un port `MqttCommandPort` (trait), y una implementación en el edge-agent. Esto restaura la separación de capas que se perdió respecto al legacy.
+
+### Prioridad Media
+
+#### M05 — Agregar `DomainEvent` de vuelta al domain layer
+El dominio debería poder describir sus propios eventos. Esto facilita el testing unitario de la capa de aplicación sin depender del `EventBus` de infraestructura.
+
+#### M06 — Reemplazar wildcard `pub use automation::*` en `lib.rs`
+```rust
+// Cambiar
+pub use automation::*;
+// Por
+pub use automation::{AutomationEngine, AutomationRuntimeScope, ActionRequest};
+```
+
+#### M07 — Logear advertencia cuando circuit breaker está desactivado (E06)
+En `ConnectionRuntime::new()`, si `write_circuit_fail_threshold == 0`, emitir `warn!("write circuit breaker desactivado para la conexión {}", id)`.
+
+#### M08 — Agregar `PrinterJob outbox` en edge-agent moderno
+Si se reimplementa la funcionalidad de impresora, los jobs deben persistirse en el outbox local antes de intentar enviarlos, para no perderlos en caso de reconexión.
+
+### Prioridad Baja
+
+#### M09 — Eliminar `runtime.zip` del repositorio legacy
+Agregar `.zip` a `.gitignore` o eliminarlo manualmente.
+
+#### M10 — Documentar cabeceras de crates en versión moderna
+Agregar `//! doc-comments` al `lib.rs` de `application`, `infrastructure`, y `domain` explicando el propósito y los principios del crate.
+
+#### M11 — Configurar valores de circuit breaker y dedup como constantes con nombre
+Reemplazar `30_000` y `0` hardcodeados en `connection_runtime.rs` por constantes con nombre descriptivo, o emitir advertencias cuando se usan los valores por defecto.
+
+---
+
+## 5. Resumen de Deuda Técnica
+
+| ID | Severidad | Descripción | Versión |
+|---|---|---|---|
+| E01 | 🔴 Crítico | `mqtt_bridge.rs` God Object (100KB) | Moderno |
+| L01 | 🔴 Crítico | Application depende de `infrastructure::MqttClient` directamente | Legacy |
+| L02 | 🔴 Crítico | `reconnect()` tiene lógica muerta y confusa | Legacy |
+| L04 | 🔴 Crítico | Jobs de impresión descartados sin outbox | Legacy |
+| E02 | 🟡 Importante | Wildcard export `pub use automation::*` | Moderno |
+| E03 | 🟡 Importante | `start_connection` silencia duplicados | Moderno |
+| E04 | 🟡 Importante | Tags OnChange/OnMessage excluidos de timeout | Moderno |
+| L03 | 🟡 Importante | `PrinterManager` retry sin backoff exponencial | Legacy |
+| L05 | 🟡 Importante | `change_threshold` solo aplica a f64 | Legacy |
+| E05/E06 | 🟢 Menor | Defaults hardcoded sin warnings | Moderno |
+| L06 | 🟢 Menor | `runtime.zip` residual en source | Legacy |
+
+---
+
+## 6. Casos de Uso: Matriz de Cobertura
+
+| Caso de Uso | Legacy | Moderno |
+|---|---|---|
+| UC-1: Leer tag por polling | ✅ TagExecutor | ✅ ConnectionRuntime |
+| UC-2: Leer tag OnChange | ✅ TagExecutor | ✅ ConnectionRuntime |
+| UC-3: Escribir comando a tag | ✅ básico | ✅ con prioridad, dedup, audit |
+| UC-4: Ejecutar automatización | ✅ AutomationEngine | ✅ AutomationEngine (mejorado) |
+| UC-5: Imprimir ticket individual | ✅ PrintingActionExecutor | ❌ **FALTANTE** |
+| UC-6: Acumular e imprimir batch | ✅ BatchManager + PrintBatch | ❌ **FALTANTE** |
+| UC-7: Comando manual via MQTT | ✅ CommandListener | ⚠️ Parcial en mqtt_bridge |
+| UC-8: Config remota aplica | ✅ ConfigManager | ✅ bootstrap.rs |
+| UC-9: Store-and-forward MQTT | ❌ | ✅ mqtt_outbox.rs |
+| UC-10: Tag quality timeout | ⚠️ básico | ✅ con QualityReason |
+| UC-11: Circuit breaker escritura | ❌ | ✅ configurable |
+| UC-12: Audit trail escrituras | ❌ | ✅ WriteAuditRepository |
+| UC-13: Pipeline parse/validate | ✅ TagPipeline | ❌ **FALTANTE** |

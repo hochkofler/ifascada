@@ -1,0 +1,325 @@
+﻿{
+    "summary":  {
+                    "run_id":  "20260224-231541",
+                    "samples_sent":  30,
+                    "matched_db":  30,
+                    "matched_sse":  30,
+                    "send_to_payload_ms":  {
+                                               "p50":  77.087890625,
+                                               "p95":  168.070068359375,
+                                               "max":  168.285888671875
+                                           },
+                    "send_to_db_ms":  {
+                                          "p50":  77.0869140625,
+                                          "p95":  168.069091796875,
+                                          "max":  168.285888671875
+                                      },
+                    "send_to_sse_ms":  {
+                                           "p50":  99,
+                                           "p95":  209,
+                                           "max":  232
+                                       }
+                },
+    "details":  [
+                    {
+                        "raw":  "+ 23.1000 g",
+                        "send_ts_ms":  1771989342851,
+                        "payload_ts_ms":  1771989342894.448,
+                        "db_ts_ms":  1771989342894.447,
+                        "sse_recv_ts_ms":  1771989342941,
+                        "send_to_payload_ms":  43.447998046875,
+                        "send_to_db_ms":  43.447021484375,
+                        "send_to_sse_ms":  90
+                    },
+                    {
+                        "raw":  "+ 23.1110 g",
+                        "send_ts_ms":  1771989343892,
+                        "payload_ts_ms":  1771989343908.209,
+                        "db_ts_ms":  1771989343908.209,
+                        "sse_recv_ts_ms":  1771989343951,
+                        "send_to_payload_ms":  16.208984375,
+                        "send_to_db_ms":  16.208984375,
+                        "send_to_sse_ms":  59
+                    },
+                    {
+                        "raw":  "+ 23.1220 g",
+                        "send_ts_ms":  1771989344901,
+                        "payload_ts_ms":  1771989344917.209,
+                        "db_ts_ms":  1771989344917.209,
+                        "sse_recv_ts_ms":  1771989344957,
+                        "send_to_payload_ms":  16.208984375,
+                        "send_to_db_ms":  16.208984375,
+                        "send_to_sse_ms":  56
+                    },
+                    {
+                        "raw":  "+ 23.1330 g",
+                        "send_ts_ms":  1771989345919,
+                        "payload_ts_ms":  1771989346087.2859,
+                        "db_ts_ms":  1771989346087.2859,
+                        "sse_recv_ts_ms":  1771989346128,
+                        "send_to_payload_ms":  168.285888671875,
+                        "send_to_db_ms":  168.285888671875,
+                        "send_to_sse_ms":  209
+                    },
+                    {
+                        "raw":  "+ 23.1440 g",
+                        "send_ts_ms":  1771989346935,
+                        "payload_ts_ms":  1771989347090.4829,
+                        "db_ts_ms":  1771989347090.4829,
+                        "sse_recv_ts_ms":  1771989347115,
+                        "send_to_payload_ms":  155.48291015625,
+                        "send_to_db_ms":  155.48291015625,
+                        "send_to_sse_ms":  180
+                    },
+                    {
+                        "raw":  "+ 23.1550 g",
+                        "send_ts_ms":  1771989347962,
+                        "payload_ts_ms":  1771989348085.6609,
+                        "db_ts_ms":  1771989348085.6609,
+                        "sse_recv_ts_ms":  1771989348107,
+                        "send_to_payload_ms":  123.660888671875,
+                        "send_to_db_ms":  123.660888671875,
+                        "send_to_sse_ms":  145
+                    },
+                    {
+                        "raw":  "+ 23.1660 g",
+                        "send_ts_ms":  1771989348976,
+                        "payload_ts_ms":  1771989349085.2451,
+                        "db_ts_ms":  1771989349085.2439,
+                        "sse_recv_ts_ms":  1771989349134,
+                        "send_to_payload_ms":  109.2451171875,
+                        "send_to_db_ms":  109.243896484375,
+                        "send_to_sse_ms":  158
+                    },
+                    {
+                        "raw":  "+ 23.1770 g",
+                        "send_ts_ms":  1771989349991,
+                        "payload_ts_ms":  1771989350083.812,
+                        "db_ts_ms":  1771989350083.812,
+                        "sse_recv_ts_ms":  1771989350132,
+                        "send_to_payload_ms":  92.81201171875,
+                        "send_to_db_ms":  92.81201171875,
+                        "send_to_sse_ms":  141
+                    },
+                    {
+                        "raw":  "+ 23.1880 g",
+                        "send_ts_ms":  1771989351005,
+                        "payload_ts_ms":  1771989351097.7759,
+                        "db_ts_ms":  1771989351097.7749,
+                        "sse_recv_ts_ms":  1771989351138,
+                        "send_to_payload_ms":  92.77587890625,
+                        "send_to_db_ms":  92.77490234375,
+                        "send_to_sse_ms":  133
+                    },
+                    {
+                        "raw":  "+ 23.1990 g",
+                        "send_ts_ms":  1771989352020,
+                        "payload_ts_ms":  1771989352096.835,
+                        "db_ts_ms":  1771989352096.835,
+                        "sse_recv_ts_ms":  1771989352119,
+                        "send_to_payload_ms":  76.8349609375,
+                        "send_to_db_ms":  76.8349609375,
+                        "send_to_sse_ms":  99
+                    },
+                    {
+                        "raw":  "+ 23.2100 g",
+                        "send_ts_ms":  1771989353032,
+                        "payload_ts_ms":  1771989353093.1011,
+                        "db_ts_ms":  1771989353093.1011,
+                        "sse_recv_ts_ms":  1771989353118,
+                        "send_to_payload_ms":  61.10107421875,
+                        "send_to_db_ms":  61.10107421875,
+                        "send_to_sse_ms":  86
+                    },
+                    {
+                        "raw":  "+ 23.2210 g",
+                        "send_ts_ms":  1771989354046,
+                        "payload_ts_ms":  1771989354092.2461,
+                        "db_ts_ms":  1771989354092.2451,
+                        "sse_recv_ts_ms":  1771989354130,
+                        "send_to_payload_ms":  46.24609375,
+                        "send_to_db_ms":  46.2451171875,
+                        "send_to_sse_ms":  84
+                    },
+                    {
+                        "raw":  "+ 23.2320 g",
+                        "send_ts_ms":  1771989355060,
+                        "payload_ts_ms":  1771989355091.52,
+                        "db_ts_ms":  1771989355091.52,
+                        "sse_recv_ts_ms":  1771989355141,
+                        "send_to_payload_ms":  31.52001953125,
+                        "send_to_db_ms":  31.52001953125,
+                        "send_to_sse_ms":  81
+                    },
+                    {
+                        "raw":  "+ 23.2430 g",
+                        "send_ts_ms":  1771989356074,
+                        "payload_ts_ms":  1771989356089.7151,
+                        "db_ts_ms":  1771989356089.7151,
+                        "sse_recv_ts_ms":  1771989356113,
+                        "send_to_payload_ms":  15.715087890625,
+                        "send_to_db_ms":  15.715087890625,
+                        "send_to_sse_ms":  39
+                    },
+                    {
+                        "raw":  "+ 23.2540 g",
+                        "send_ts_ms":  1771989357086,
+                        "payload_ts_ms":  1771989357101.614,
+                        "db_ts_ms":  1771989357101.613,
+                        "sse_recv_ts_ms":  1771989357123,
+                        "send_to_payload_ms":  15.614013671875,
+                        "send_to_db_ms":  15.613037109375,
+                        "send_to_sse_ms":  37
+                    },
+                    {
+                        "raw":  "+ 23.2650 g",
+                        "send_ts_ms":  1771989358099,
+                        "payload_ts_ms":  1771989358114.782,
+                        "db_ts_ms":  1771989358114.781,
+                        "sse_recv_ts_ms":  1771989358162,
+                        "send_to_payload_ms":  15.781982421875,
+                        "send_to_db_ms":  15.781005859375,
+                        "send_to_sse_ms":  63
+                    },
+                    {
+                        "raw":  "+ 23.2760 g",
+                        "send_ts_ms":  1771989359107,
+                        "payload_ts_ms":  1771989359123.5481,
+                        "db_ts_ms":  1771989359123.5481,
+                        "sse_recv_ts_ms":  1771989359172,
+                        "send_to_payload_ms":  16.548095703125,
+                        "send_to_db_ms":  16.548095703125,
+                        "send_to_sse_ms":  65
+                    },
+                    {
+                        "raw":  "+ 23.2870 g",
+                        "send_ts_ms":  1771989360121,
+                        "payload_ts_ms":  1771989360289.07,
+                        "db_ts_ms":  1771989360289.0691,
+                        "sse_recv_ts_ms":  1771989360353,
+                        "send_to_payload_ms":  168.070068359375,
+                        "send_to_db_ms":  168.069091796875,
+                        "send_to_sse_ms":  232
+                    },
+                    {
+                        "raw":  "+ 23.2980 g",
+                        "send_ts_ms":  1771989361129,
+                        "payload_ts_ms":  1771989361282.09,
+                        "db_ts_ms":  1771989361282.09,
+                        "sse_recv_ts_ms":  1771989361332,
+                        "send_to_payload_ms":  153.090087890625,
+                        "send_to_db_ms":  153.090087890625,
+                        "send_to_sse_ms":  203
+                    },
+                    {
+                        "raw":  "+ 23.3090 g",
+                        "send_ts_ms":  1771989362137,
+                        "payload_ts_ms":  1771989362290.2119,
+                        "db_ts_ms":  1771989362290.2119,
+                        "sse_recv_ts_ms":  1771989362339,
+                        "send_to_payload_ms":  153.2119140625,
+                        "send_to_db_ms":  153.2119140625,
+                        "send_to_sse_ms":  202
+                    },
+                    {
+                        "raw":  "+ 23.3200 g",
+                        "send_ts_ms":  1771989363144,
+                        "payload_ts_ms":  1771989363283.7561,
+                        "db_ts_ms":  1771989363283.7561,
+                        "sse_recv_ts_ms":  1771989363331,
+                        "send_to_payload_ms":  139.756103515625,
+                        "send_to_db_ms":  139.756103515625,
+                        "send_to_sse_ms":  187
+                    },
+                    {
+                        "raw":  "+ 23.3310 g",
+                        "send_ts_ms":  1771989364159,
+                        "payload_ts_ms":  1771989364282.0811,
+                        "db_ts_ms":  1771989364282.0811,
+                        "sse_recv_ts_ms":  1771989364304,
+                        "send_to_payload_ms":  123.0810546875,
+                        "send_to_db_ms":  123.0810546875,
+                        "send_to_sse_ms":  145
+                    },
+                    {
+                        "raw":  "+ 23.3420 g",
+                        "send_ts_ms":  1771989365167,
+                        "payload_ts_ms":  1771989365291.303,
+                        "db_ts_ms":  1771989365291.302,
+                        "sse_recv_ts_ms":  1771989365340,
+                        "send_to_payload_ms":  124.302978515625,
+                        "send_to_db_ms":  124.302001953125,
+                        "send_to_sse_ms":  173
+                    },
+                    {
+                        "raw":  "+ 23.3530 g",
+                        "send_ts_ms":  1771989366176,
+                        "payload_ts_ms":  1771989366283.9719,
+                        "db_ts_ms":  1771989366283.9709,
+                        "sse_recv_ts_ms":  1771989366310,
+                        "send_to_payload_ms":  107.971923828125,
+                        "send_to_db_ms":  107.970947265625,
+                        "send_to_sse_ms":  134
+                    },
+                    {
+                        "raw":  "+ 23.3640 g",
+                        "send_ts_ms":  1771989367192,
+                        "payload_ts_ms":  1771989367286.1221,
+                        "db_ts_ms":  1771989367286.1211,
+                        "sse_recv_ts_ms":  1771989367334,
+                        "send_to_payload_ms":  94.1220703125,
+                        "send_to_db_ms":  94.12109375,
+                        "send_to_sse_ms":  142
+                    },
+                    {
+                        "raw":  "+ 23.3750 g",
+                        "send_ts_ms":  1771989368203,
+                        "payload_ts_ms":  1771989368295.981,
+                        "db_ts_ms":  1771989368295.981,
+                        "sse_recv_ts_ms":  1771989368345,
+                        "send_to_payload_ms":  92.98095703125,
+                        "send_to_db_ms":  92.98095703125,
+                        "send_to_sse_ms":  142
+                    },
+                    {
+                        "raw":  "+ 23.3860 g",
+                        "send_ts_ms":  1771989369217,
+                        "payload_ts_ms":  1771989369294.0879,
+                        "db_ts_ms":  1771989369294.0869,
+                        "sse_recv_ts_ms":  1771989369315,
+                        "send_to_payload_ms":  77.087890625,
+                        "send_to_db_ms":  77.0869140625,
+                        "send_to_sse_ms":  98
+                    },
+                    {
+                        "raw":  "+ 23.3970 g",
+                        "send_ts_ms":  1771989370229,
+                        "payload_ts_ms":  1771989370290.906,
+                        "db_ts_ms":  1771989370290.905,
+                        "sse_recv_ts_ms":  1771989370314,
+                        "send_to_payload_ms":  61.906005859375,
+                        "send_to_db_ms":  61.905029296875,
+                        "send_to_sse_ms":  85
+                    },
+                    {
+                        "raw":  "+ 23.4080 g",
+                        "send_ts_ms":  1771989371242,
+                        "payload_ts_ms":  1771989371288.311,
+                        "db_ts_ms":  1771989371288.311,
+                        "sse_recv_ts_ms":  1771989371338,
+                        "send_to_payload_ms":  46.31103515625,
+                        "send_to_db_ms":  46.31103515625,
+                        "send_to_sse_ms":  96
+                    },
+                    {
+                        "raw":  "+ 23.4190 g",
+                        "send_ts_ms":  1771989372257,
+                        "payload_ts_ms":  1771989372287.604,
+                        "db_ts_ms":  1771989372287.604,
+                        "sse_recv_ts_ms":  1771989372310,
+                        "send_to_payload_ms":  30.60400390625,
+                        "send_to_db_ms":  30.60400390625,
+                        "send_to_sse_ms":  53
+                    }
+                ]
+}

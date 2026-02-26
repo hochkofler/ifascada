@@ -1,0 +1,90 @@
+{
+  "connections": [
+    {
+      "id": "conn_scale_mock_inline_1",
+      "name": "Scale Mock Inline",
+      "driver_type": "SerialAscii",
+      "timeout_ms": 200,
+      "reconnect_delay_ms": 1000,
+      "max_retries": null,
+      "transport": {
+        "mock": {
+          "enabled": true,
+          "interval_ms": 800,
+          "frames": [
+            "+ 12.4354 g",
+            "+ 12.5354 g",
+            "  8.1000   kg  ",
+            "- 0.0150 g"
+          ]
+        },
+        "frame": {
+          "mode": "line",
+          "terminator": "\r",
+          "max_len": 128
+        },
+        "parser": {
+          "regex": "^\\s*([+-])?\\s*(\\d+(?:\\.\\d+)?)\\s*([A-Za-z]+)\\s*$",
+          "sign_group": 1,
+          "value_group": 2,
+          "unit_group": 3
+        },
+        "tag_map": {
+          "tag_scale_sim_compound": "scale:compound"
+        }
+      },
+      "tags": [
+        {
+          "id": "tag_scale_sim_compound",
+          "name": "Scale Sim Compound",
+          "device_id": "dev_scale_sim_1",
+          "source": "scale:compound",
+          "value_type": "string",
+          "update_mode": "on_change"
+        }
+      ]
+    },
+    {
+      "id": "conn_scale_rs232_manual_1",
+      "name": "Scale RS232 Manual",
+      "driver_type": "SerialAscii",
+      "timeout_ms": 200,
+      "reconnect_delay_ms": 1000,
+      "max_retries": null,
+      "transport": {
+        "serial": {
+          "port": "COM7",
+          "baud_rate": 9600,
+          "data_bits": 8,
+          "stop_bits": 1,
+          "parity": "N"
+        },
+        "frame": {
+          "mode": "line",
+          "terminator": "\r\n",
+          "max_len": 128
+        },
+        "parser": {
+          "regex": "^\\s*([+-])?\\s*(\\d+(?:\\.\\d+)?)\\s*([A-Za-z]+)\\s*$",
+          "sign_group": 1,
+          "value_group": 2,
+          "unit_group": 3
+        },
+        "read_timeout_ms": 30,
+        "tag_map": {
+          "tag_scale_manual_compound": "scale:compound"
+        }
+      },
+      "tags": [
+        {
+          "id": "tag_scale_manual_compound",
+          "name": "Scale Manual Compound",
+          "device_id": "dev_scale_manual_1",
+          "source": "scale:compound",
+          "value_type": "string",
+          "update_mode": "on_change"
+        }
+      ]
+    }
+  ]
+}

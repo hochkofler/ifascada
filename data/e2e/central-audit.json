@@ -1,0 +1,1 @@
+{"schema_version":1,"source":"edge/edge-01","connection_id":"conn_modbus_tcp_1","tag_id":"tag_hr_0","command_id":"cmd-central-e2e-1","value":42.5,"outcome":"Applied","reason":null,"timestamp":"2026-02-21T14:00:03Z"}
