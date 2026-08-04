@@ -38,6 +38,76 @@ fn extract_action_id_from_payload(
         .map(ToString::to_string)
 }
 
+fn derive_print_job_id_from_request_id(request_id: Option<&str>) -> Option<String> {
+    let rid = request_id?.trim();
+    if rid.is_empty() {
+        return None;
+    }
+    if let Some((prefix, suffix)) = rid.rsplit_once('-') {
+        if !prefix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+            return Some(prefix.to_string());
+        }
+    }
+    Some(rid.to_string())
+}
+
+fn extract_print_job_id_from_payload(cmd: &EdgeActionCommandMessage) -> Option<String> {
+    let payload = &cmd.payload;
+    payload
+        .get("print_job_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            payload
+                .get("args")
+                .and_then(|v| v.get("print_job_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(ToString::to_string)
+        })
+        .or_else(|| derive_print_job_id_from_request_id(cmd.request_id.as_deref()))
+}
+
+async fn enrich_print_persist_payload_from_cache(
+    cmd: &mut EdgeActionCommandMessage,
+    action_runtime_state: &Arc<TokioMutex<ActionRuntimeState>>,
+) {
+    if !cmd.action_type.trim().eq_ignore_ascii_case("print.persist") {
+        return;
+    }
+    let Some(print_job_id) = extract_print_job_id_from_payload(cmd) else {
+        return;
+    };
+    let snapshot = {
+        let mut st = action_runtime_state.lock().await;
+        st.printed_snapshots.remove(&print_job_id)
+    };
+    let Some(snapshot) = snapshot else {
+        return;
+    };
+    let Some(obj) = cmd.payload.as_object_mut() else {
+        return;
+    };
+    obj.entry("print_job_id".to_string())
+        .or_insert_with(|| serde_json::Value::String(print_job_id));
+    if !obj.contains_key("printed_snapshot") {
+        obj.insert("printed_snapshot".to_string(), snapshot.clone());
+    }
+    if !obj.contains_key("ticket_no") {
+        if let Some(v) = snapshot.get("ticket_no") {
+            obj.insert("ticket_no".to_string(), v.clone());
+        }
+    }
+    if !obj.contains_key("print_id") {
+        if let Some(v) = snapshot.get("print_id") {
+            obj.insert("print_id".to_string(), v.clone());
+        }
+    }
+}
+
 pub(crate) async fn handle_action_command_packet(
     config: &MqttBridgeConfig,
     action_runtime_state: &Arc<TokioMutex<ActionRuntimeState>>,
@@ -101,9 +171,11 @@ pub(crate) async fn handle_action_command_packet(
             build_action_result(source_id, &cmd, false, Some(e))
         }
     };
+    let mut audit_cmd = cmd.clone();
+    enrich_print_persist_payload_from_cache(&mut audit_cmd, action_runtime_state).await;
     let audit = build_action_audit(
         source_id,
-        &cmd,
+        &audit_cmd,
         if result.accepted { "Applied" } else { "Failed" },
         result.reason.clone(),
     );

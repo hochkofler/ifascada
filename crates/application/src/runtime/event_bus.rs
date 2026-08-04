@@ -16,6 +16,7 @@ pub enum WriteCommandOutcome {
 pub enum RuntimeEvent {
     TagChanged {
         tag_id: TagId,
+        device_id: DeviceId,
         value: TagValue,
         trigger_value: Option<TagValue>,
         quality: TagQuality,

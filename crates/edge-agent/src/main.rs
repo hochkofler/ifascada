@@ -4,6 +4,7 @@ use infrastructure::drivers::modbus_rtu::ModbusRtuFactory;
 use infrastructure::drivers::modbus_tcp::ModbusTcpFactory;
 use infrastructure::drivers::serial_ascii::SerialAsciiFactory;
 use infrastructure::drivers::simulator::SimulatorFactory;
+mod ticket_sequence;
 use mqtt_bridge::{MqttBridgeConfig, MqttBridgeExit, run_mqtt_bridge};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -12,6 +13,13 @@ mod bootstrap;
 mod action_orchestrator;
 mod mqtt_bridge;
 mod mqtt_outbox;
+
+fn runtime_is_prod() -> bool {
+    std::env::var("EDGE_RUNTIME_ENV")
+        .or_else(|_| std::env::var("CENTRAL_RUNTIME_ENV"))
+        .unwrap_or_else(|_| "dev".to_string())
+        .eq_ignore_ascii_case("prod")
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -32,6 +40,34 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .map(|v| !v.trim().is_empty())
         .unwrap_or(false);
+    if runtime_is_prod() && remote_config_enabled {
+        let has_bearer = std::env::var("EDGE_CONFIG_BEARER_TOKEN")
+            .ok()
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        let has_login_pair = std::env::var("EDGE_CONFIG_API_USER")
+            .ok()
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+            && std::env::var("EDGE_CONFIG_API_PASSWORD")
+                .ok()
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false);
+        if !has_bearer && !has_login_pair {
+            return Err(anyhow::anyhow!(
+                "EDGE_CONFIG_BEARER_TOKEN or EDGE_CONFIG_API_USER/EDGE_CONFIG_API_PASSWORD are required in prod when EDGE_CONFIG_URL is enabled"
+            ));
+        }
+        let has_enroll_token = std::env::var("EDGE_ENROLL_TOKEN")
+            .ok()
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        if !has_enroll_token {
+            return Err(anyhow::anyhow!(
+                "EDGE_ENROLL_TOKEN is required in prod when EDGE_CONFIG_URL is enabled"
+            ));
+        }
+    }
 
     if let Some(loaded) = bootstrap::load_remote_or_cached_and_start(&mut engine).await? {
         runtime_automations = loaded.automations;
@@ -103,6 +139,8 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "edge-agent-01".to_string()),
             outbox_path: std::env::var("MQTT_OUTBOX_PATH")
                 .unwrap_or_else(|_| "./data/mqtt_outbox.db".to_string()),
+            ticket_sequence_path: std::env::var("EDGE_TICKET_SEQUENCE_PATH")
+                .unwrap_or_else(|_| "./data/ticket_sequence.db".to_string()),
             outbox_flush_batch: std::env::var("MQTT_OUTBOX_FLUSH_BATCH")
                 .ok()
                 .and_then(|s| s.parse::<usize>().ok())
@@ -145,9 +183,21 @@ async fn main() -> anyhow::Result<()> {
             config_hash: current_config_hash,
             config_check_url: std::env::var("EDGE_CONFIG_URL").ok(),
             config_check_enroll_token: std::env::var("EDGE_ENROLL_TOKEN").ok(),
-            config_check_hmac_secret: std::env::var("EDGE_CONFIG_HMAC_SECRET")
-                .ok()
-                .or_else(|| Some("dev-edge-config-signing-secret".to_string())),
+            config_check_hmac_secret: match std::env::var("EDGE_CONFIG_HMAC_SECRET") {
+                Ok(v) if !v.trim().is_empty() => Some(v),
+                _ => {
+                    let remote_enabled = std::env::var("EDGE_CONFIG_URL")
+                        .ok()
+                        .map(|v| !v.trim().is_empty())
+                        .unwrap_or(false);
+                    if runtime_is_prod() && remote_enabled {
+                        return Err(anyhow::anyhow!(
+                            "EDGE_CONFIG_HMAC_SECRET is required in prod when EDGE_CONFIG_URL is enabled"
+                        ));
+                    }
+                    None
+                }
+            },
             config_check_key_id: std::env::var("EDGE_CONFIG_KEY_ID").ok(),
             config_cache_path: std::env::var("EDGE_RUNTIME_CACHE_PATH")
                 .unwrap_or_else(|_| "./data/runtime_config.signed.json".to_string()),

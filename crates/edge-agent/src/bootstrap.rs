@@ -62,6 +62,11 @@ struct EdgeConfigCheckResponse {
     poll_after_secs: u64,
 }
 
+#[derive(Debug, Deserialize)]
+struct EdgeAuthLoginResponse {
+    access_token: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LoadedRuntimeConfig {
     pub started_connections: usize,
@@ -284,12 +289,17 @@ async fn fetch_remote_envelope_if_changed(
     let base = base_url.trim_end_matches('/');
     let check_url = format!("{}/api/edge/config/check", base);
     let runtime_url = format!("{}/api/edge/config/runtime", base);
+    let auth_token = fetch_config_api_token(&client, base).await?;
     let check_req = EdgeConfigCheckRequest {
         edge_id,
         enrollment_token,
         current_config_hash,
     };
-    let check_resp = client.post(&check_url).json(&check_req).send().await?;
+    let mut check_builder = client.post(&check_url).json(&check_req);
+    if let Some(token) = auth_token.as_deref() {
+        check_builder = check_builder.bearer_auth(token);
+    }
+    let check_resp = check_builder.send().await?;
     if !check_resp.status().is_success() {
         return Err(anyhow::anyhow!(
             "config check failed with status {}",
@@ -303,14 +313,15 @@ async fn fetch_remote_envelope_if_changed(
     if !check.config_changed {
         return Ok(None);
     }
-    let env = client
-        .get(&runtime_url)
-        .query(&[
-            ("edge_id", edge_id),
-            ("want_hash", current_config_hash.unwrap_or("")),
-        ])
-        .send()
-        .await?;
+    let mut runtime_builder = client.get(&runtime_url).query(&[
+        ("edge_id", edge_id),
+        ("want_hash", current_config_hash.unwrap_or("")),
+    ]);
+    if let Some(token) = auth_token.as_deref() {
+        runtime_builder = runtime_builder.bearer_auth(token);
+    }
+    runtime_builder = runtime_builder.header("x-enrollment-token", enrollment_token);
+    let env = runtime_builder.send().await?;
     if !env.status().is_success() {
         return Err(anyhow::anyhow!(
             "runtime config fetch failed with status {}",
@@ -325,6 +336,43 @@ async fn fetch_remote_envelope_if_changed(
     }
     let _ = check.poll_after_secs;
     Ok(Some(env))
+}
+
+async fn fetch_config_api_token(client: &reqwest::Client, base: &str) -> Result<Option<String>> {
+    if let Ok(token) = std::env::var("EDGE_CONFIG_BEARER_TOKEN") {
+        if !token.trim().is_empty() {
+            return Ok(Some(token));
+        }
+    }
+
+    let user = std::env::var("EDGE_CONFIG_API_USER").ok();
+    let password = std::env::var("EDGE_CONFIG_API_PASSWORD").ok();
+    let (Some(user), Some(password)) = (user, password) else {
+        return Ok(None);
+    };
+    if user.trim().is_empty() || password.trim().is_empty() {
+        return Ok(None);
+    }
+    let login_url = format!("{}/api/auth/login", base);
+    let login_resp = client
+        .post(&login_url)
+        .json(&json!({
+            "username": user,
+            "password": password
+        }))
+        .send()
+        .await?;
+    if !login_resp.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "config api login failed with status {}",
+            login_resp.status()
+        ));
+    }
+    let login = login_resp.json::<EdgeAuthLoginResponse>().await?;
+    if login.access_token.trim().is_empty() {
+        return Err(anyhow::anyhow!("config api login returned empty access_token"));
+    }
+    Ok(Some(login.access_token))
 }
 
 fn verify_envelope(

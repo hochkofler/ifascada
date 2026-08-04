@@ -226,6 +226,7 @@ impl ConnectionRuntime {
                                                 self.live_state.update_tag(tag_id.clone(), state.value.clone(), state.quality);
                                                 self.event_bus.publish(RuntimeEvent::TagChanged {
                                                     tag_id: tag_id.clone(),
+                                                    device_id: tag_state.runtime.definition.device_id.clone(),
                                                     value: state.value.clone(),
                                                     trigger_value: state.trigger_value.clone(),
                                                     quality: state.quality,
@@ -502,6 +503,7 @@ impl ConnectionRuntime {
                             .update_tag(tag_id.clone(), value.clone(), quality);
                         self.event_bus.publish(RuntimeEvent::TagChanged {
                             tag_id: tag_id.clone(),
+                            device_id: tag_state.runtime.definition.device_id.clone(),
                             value,
                             trigger_value: None,
                             quality,
@@ -526,6 +528,7 @@ impl ConnectionRuntime {
                 .update_tag(tag_id.clone(), value.clone(), quality);
             self.event_bus.publish(RuntimeEvent::TagChanged {
                 tag_id: tag_id.clone(),
+                device_id: tag_state.runtime.definition.device_id.clone(),
                 value,
                 trigger_value: None,
                 quality,
@@ -675,6 +678,7 @@ impl ConnectionRuntime {
                     .update_tag(tag_id.clone(), state.value.clone(), state.quality);
                 self.event_bus.publish(RuntimeEvent::TagChanged {
                     tag_id: tag_id.clone(),
+                    device_id: tag_state.runtime.definition.device_id.clone(),
                     value: state.value.clone(),
                     trigger_value: state.trigger_value.clone(),
                     quality: state.quality,
