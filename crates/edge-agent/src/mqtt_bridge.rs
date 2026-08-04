@@ -12,7 +12,7 @@ use crate::mqtt_outbox::{
 use domain::id::TagId;
 use domain::AutomationSpec;
 use domain::tag::TagValue;
-use rumqttc::{AsyncClient, Event, EventLoop, Incoming, MqttOptions, QoS};
+use rumqttc::{AsyncClient, Event, EventLoop, Incoming, MqttOptions, QoS, Transport};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,6 +35,7 @@ pub struct MqttBridgeConfig {
     pub broker_port: u16,
     pub client_id: String,
     pub outbox_path: String,
+    pub ticket_sequence_path: String,
     pub outbox_flush_batch: usize,
     pub outbox_max_messages: usize,
     pub outbox_active_key_id: String,
@@ -695,6 +696,7 @@ pub fn to_tag_telemetry_message(event: &RuntimeEvent) -> Option<TagTelemetryMqtt
     match event {
         RuntimeEvent::TagChanged {
             tag_id,
+            device_id: _,
             value,
             trigger_value: _,
             quality,
@@ -1146,6 +1148,7 @@ pub async fn run_mqtt_bridge(
     );
     let mut opts = MqttOptions::new(&config.client_id, &config.broker_host, config.broker_port);
     opts.set_keep_alive(Duration::from_secs(10));
+    apply_edge_mqtt_security_from_env(&mut opts)?;
     let (client, mut event_loop): (AsyncClient, EventLoop) = AsyncClient::new(opts, 100);
     let cmd_topic = config.command_topic();
     let action_cmd_topic = config.action_command_topic();
@@ -1292,11 +1295,16 @@ pub async fn run_mqtt_bridge(
                     }
                     if let Some(mut msg) = to_tag_telemetry_message(&evt) {
                         msg.source = publish_source.clone();
-                        let trigger_value = match &evt {
-                            RuntimeEvent::TagChanged { trigger_value, .. } => {
-                                trigger_value.clone().unwrap_or_else(|| msg.value.clone())
-                            }
-                            _ => msg.value.clone(),
+                        let (trigger_value, trigger_device_id) = match &evt {
+                            RuntimeEvent::TagChanged {
+                                trigger_value,
+                                device_id,
+                                ..
+                            } => (
+                                trigger_value.clone().unwrap_or_else(|| msg.value.clone()),
+                                Some(device_id.to_string()),
+                            ),
+                            _ => (msg.value.clone(), None),
                         };
                         let auto_requests = automation_engine.on_tag_changed(
                             &msg.tag_id,
@@ -1311,7 +1319,9 @@ pub async fn run_mqtt_bridge(
                                     serde_json::json!({
                                         "automation_id": req.automation_id,
                                         "tag_id": req.trigger_tag_id,
+                                        "device_id": trigger_device_id,
                                         "value": req.trigger_value,
+                                        "display_value": msg.value,
                                         "timestamp": req.trigger_timestamp
                                     }),
                                 );
@@ -1718,6 +1728,52 @@ pub async fn run_mqtt_bridge(
     }
 }
 
+fn apply_edge_mqtt_security_from_env(opts: &mut MqttOptions) -> anyhow::Result<()> {
+    let runtime_prod = std::env::var("EDGE_RUNTIME_ENV")
+        .or_else(|_| std::env::var("CENTRAL_RUNTIME_ENV"))
+        .unwrap_or_else(|_| "dev".to_string())
+        .eq_ignore_ascii_case("prod");
+
+    let mut has_credentials = false;
+    if let Ok(user) = std::env::var("MQTT_USERNAME") {
+        if !user.trim().is_empty() {
+            let password = std::env::var("MQTT_PASSWORD").unwrap_or_default();
+            opts.set_credentials(user, password);
+            has_credentials = true;
+        }
+    }
+    if runtime_prod && !has_credentials {
+        return Err(anyhow::anyhow!(
+            "MQTT_USERNAME and MQTT_PASSWORD are required in prod"
+        ));
+    }
+
+    let tls_enabled = std::env::var("MQTT_TLS_ENABLED")
+        .ok()
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false);
+    if runtime_prod && !tls_enabled {
+        return Err(anyhow::anyhow!(
+            "MQTT_TLS_ENABLED must be true in prod (mqtts without fallback)"
+        ));
+    }
+    if !tls_enabled {
+        return Ok(());
+    }
+
+    if let Ok(path) = std::env::var("MQTT_TLS_CA_PATH") {
+        if !path.trim().is_empty() {
+            let ca = fs::read(&path)
+                .map_err(|e| anyhow::anyhow!("failed to read MQTT_TLS_CA_PATH '{}': {}", path, e))?;
+            opts.set_transport(Transport::tls(ca, None, None));
+            return Ok(());
+        }
+    }
+
+    opts.set_transport(Transport::tls_with_default_config());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1922,6 +1978,7 @@ mod tests {
     fn test_to_tag_telemetry_message_maps_runtime_event() {
         let evt = RuntimeEvent::TagChanged {
             tag_id: TagId::new("tag_scale_compound"),
+            device_id: domain::id::DeviceId::new("dev_scale_1"),
             value: TagValue::String("{\"value\":12.3,\"unit\":\"g\"}".to_string()),
             trigger_value: None,
             quality: domain::tag::TagQuality::good(),
@@ -1941,6 +1998,7 @@ mod tests {
             broker_port: 1883,
             client_id: "edge-01".to_string(),
             outbox_path: "./data/mqtt_outbox.db".to_string(),
+            ticket_sequence_path: "./data/ticket_sequence.db".to_string(),
             outbox_flush_batch: 50,
             outbox_max_messages: 1000,
             outbox_active_key_id: "v1".to_string(),
@@ -2185,14 +2243,14 @@ mod tests {
     fn test_action_buffer_id_uses_explicit_then_context() {
         let explicit = serde_json::json!({
             "buffer_id":"weights_session_1",
-            "trigger":{"automation_id":"a1","tag_id":"tag_x"}
+            "trigger":{"device_id":"dev_scale_1","tag_id":"tag_x"}
         });
         assert_eq!(action_buffer_id(&explicit), "weights_session_1");
 
         let contextual = serde_json::json!({
-            "trigger":{"automation_id":"a1","tag_id":"tag_x"}
+            "trigger":{"device_id":"dev_scale_1","tag_id":"tag_x"}
         });
-        assert_eq!(action_buffer_id(&contextual), "auto:a1:tag:tag_x");
+        assert_eq!(action_buffer_id(&contextual), "device:dev_scale_1");
 
         let tag_only = serde_json::json!({
             "trigger":{"tag_id":"tag_x"}
@@ -2208,6 +2266,7 @@ mod tests {
             broker_port: 1883,
             client_id: "edge-01".to_string(),
             outbox_path: "./data/mqtt_outbox.db".to_string(),
+            ticket_sequence_path: "./data/ticket_sequence.db".to_string(),
             outbox_flush_batch: 50,
             outbox_max_messages: 1000,
             outbox_active_key_id: "v1".to_string(),
@@ -2303,7 +2362,6 @@ mod tests {
             .unwrap();
 
         let txt = std::fs::read_to_string(&out).unwrap_or_default();
-        assert!(txt.contains("BUFFER: weights-a"));
         assert!(txt.contains("COUNT: 1"));
         let _ = std::fs::remove_file(&out);
     }
@@ -2371,7 +2429,7 @@ mod tests {
             .await
             .unwrap();
         let txt = std::fs::read_to_string(&out).unwrap_or_default();
-        assert!(txt.contains("BUFFER: weights-b"));
+        assert!(txt.contains("COUNT: 1"));
         let _ = std::fs::remove_file(&out);
     }
 

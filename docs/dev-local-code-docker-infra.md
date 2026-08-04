@@ -2,6 +2,7 @@
 
 Referencia principal de instalacion y variables:
 1. `docs/guia-instalacion-configuracion-completa.md`
+2. Deploy central en contenedor: `docs/deploy-central-compose.md`
 
 ## Goal
 Run only infrastructure in Docker and keep all Rust services (`central-server`, `edge-agent`) running locally for fast iteration.

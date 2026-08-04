@@ -120,10 +120,14 @@ export default function HistoryPage() {
           "buffer.weights.accumulate",
           {
             buffer_id: bufferId,
+            measurement_device_id: selectedTagObj.device_code,
+            measurement_device_name: selectedTagObj.device_code,
             max_items: Math.max(500, selectedItems.length + 10),
             only_positive: false,
             trigger: {
               tag_id: selectedTagObj.tag_code,
+              device_id: selectedTagObj.device_code,
+              device_name: selectedTagObj.device_code,
               value: r.value,
               timestamp: r.ts,
             },
@@ -142,6 +146,13 @@ export default function HistoryPage() {
       args.buffer_id = bufferId;
       args.clear_after_print = true;
       payload.args = args;
+      payload.measurement_device_id = selectedTagObj.device_code;
+      payload.measurement_device_name = selectedTagObj.device_code;
+      payload.trigger = {
+        tag_id: selectedTagObj.tag_code,
+        device_id: selectedTagObj.device_code,
+        device_name: selectedTagObj.device_code,
+      };
       if (!payload.command) payload.command = "print";
 
       await postEdgeAction(

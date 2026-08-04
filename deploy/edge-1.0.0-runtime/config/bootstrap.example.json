@@ -1,0 +1,61 @@
+{
+  "connections": [
+    {
+      "id": "conn_modbus_tcp_1",
+      "name": "Modbus TCP Demo",
+      "driver_type": "ModbusTCP",
+      "timeout_ms": 1500,
+      "reconnect_delay_ms": 1000,
+      "max_retries": 5,
+      "transport": {
+        "host": "127.0.0.1",
+        "port": 502,
+        "unit_id": 1,
+        "connect_timeout_ms": 2000,
+        "request_timeout_ms": 1500,
+        "request_retries": 1,
+        "retry_backoff_ms": 100,
+        "max_batch_registers": 120,
+        "max_batch_bits": 2000
+      },
+      "tags": [
+        {
+          "id": "tag_hr_0",
+          "name": "Holding 0 U16",
+          "device_id": "dev_modbus_1",
+          "source": "hr:0:u16",
+          "value_type": "integer",
+          "update_mode": "polling",
+          "interval_ms": 500
+        },
+        {
+          "id": "tag_hr_2_f32",
+          "name": "Holding 2 F32",
+          "device_id": "dev_modbus_1",
+          "source": "hr:2:f32",
+          "value_type": "float",
+          "update_mode": "polling",
+          "interval_ms": 500
+        },
+        {
+          "id": "tag_hr_10_cmd",
+          "name": "Holding 10 Command",
+          "device_id": "dev_modbus_1",
+          "source": "hr:10:u16",
+          "value_type": "integer",
+          "update_mode": "polling",
+          "interval_ms": 500
+        },
+        {
+          "id": "tag_hr_11_cmd",
+          "name": "Holding 11 Command",
+          "device_id": "dev_modbus_1",
+          "source": "hr:11:u16",
+          "value_type": "integer",
+          "update_mode": "polling",
+          "interval_ms": 500
+        }
+      ]
+    }
+  ]
+}

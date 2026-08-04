@@ -12,11 +12,11 @@ services:
       - "${PG_PORT:-55432}:5432"
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
-      - ./crates/central-server/migrations/0001_core_postgres.sql:/docker-entrypoint-initdb.d/0001_core_postgres.sql:ro
-      - ./crates/central-server/migrations/0002_timescale_historian.sql:/docker-entrypoint-initdb.d/0002_timescale_historian.sql:ro
-      - ./crates/central-server/migrations/0003_tag_naming_governance.sql:/docker-entrypoint-initdb.d/0003_tag_naming_governance.sql:ro
+      - ./sql/migrations/0001_core_postgres.sql:/docker-entrypoint-initdb.d/0001_core_postgres.sql:ro
+      - ./sql/migrations/0002_timescale_historian.sql:/docker-entrypoint-initdb.d/0002_timescale_historian.sql:ro
+      - ./sql/migrations/0003_tag_naming_governance.sql:/docker-entrypoint-initdb.d/0003_tag_naming_governance.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d rustscada -h 127.0.0.1 -p 5432"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-rustscada} -h 127.0.0.1 -p 5432"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -30,11 +30,6 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
 
   mosquitto:
     image: eclipse-mosquitto:2
@@ -52,12 +47,13 @@ services:
     container_name: ifascada-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@ifascada.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@ifascada.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
     ports:
       - "${PGADMIN_PORT:-58080}:80"
     depends_on:
-      - timescaledb
+      timescaledb:
+        condition: service_started
     volumes:
       - pgadmin_data:/var/lib/pgadmin
 
@@ -73,14 +69,12 @@ services:
       PG_DSN: ${CENTRAL_PG_DSN_INTERNAL:-host=timescaledb port=5432 user=postgres dbname=rustscada sslmode=disable}
       SEED_PROFILE: ${SEED_PROFILE:-minimal}
     volumes:
-      - ./crates/central-server/migrations:/migrations:ro
-      - ./docker/db-seed.sh:/scripts/db-seed.sh:ro
+      - ./sql/migrations:/migrations:ro
+      - ./scripts/db-seed.sh:/scripts/db-seed.sh:ro
     command: ["/bin/sh", "/scripts/db-seed.sh"]
 
   central-server:
-    build:
-      context: .
-      dockerfile: docker/central-server.Dockerfile
+    image: ${CENTRAL_IMAGE:-ifascada/central-server:1.0.0}
     container_name: ifascada-central-server
     profiles: ["central"]
     restart: unless-stopped
@@ -88,7 +82,7 @@ services:
       timescaledb:
         condition: service_healthy
       redis:
-        condition: service_healthy
+        condition: service_started
       mosquitto:
         condition: service_started
     environment:
@@ -96,7 +90,7 @@ services:
       CENTRAL_MQTT_ENABLED: ${CENTRAL_MQTT_ENABLED:-true}
       CENTRAL_API_ENABLED: ${CENTRAL_API_ENABLED:-true}
       CENTRAL_API_BIND: 0.0.0.0:8088
-      MQTT_HOST: ${MQTT_HOST_INTERNAL:-mosquitto}
+      MQTT_HOST: ${MQTT_HOST_INTERNAL:-ifascada-mosquitto}
       MQTT_PORT: ${MQTT_PORT_INTERNAL:-1883}
       CENTRAL_MQTT_CLIENT_ID: ${CENTRAL_MQTT_CLIENT_ID:-central-server-01}
       CENTRAL_MQTT_TOPIC_FILTERS: ${CENTRAL_MQTT_TOPIC_FILTERS:-scada/+/edge/+/#}
@@ -109,10 +103,21 @@ services:
       CENTRAL_EDGE_CONFIG_SIGNING_SECRET: ${CENTRAL_EDGE_CONFIG_SIGNING_SECRET:-dev-edge-config-signing-secret}
       CENTRAL_EDGE_CONFIG_SIGNING_KEY_ID: ${CENTRAL_EDGE_CONFIG_SIGNING_KEY_ID:-v1}
       CENTRAL_EDGE_RUNTIME_CONFIG_PATH: /app/config/bootstrap.example.json
-    volumes:
-      - ./crates/edge-agent/config:/app/config:ro
     ports:
       - "${CENTRAL_API_PORT:-8088}:8088"
+
+  web-ui:
+    image: ${WEB_UI_IMAGE:-ifascada/web-ui:1.0.0}
+    container_name: ifascada-web-ui
+    profiles: ["webui"]
+    restart: unless-stopped
+    environment:
+      CENTRAL_API_UPSTREAM: ${CENTRAL_API_UPSTREAM:-http://ifascada-central-server:8088}
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-/api}
+      NEXT_PUBLIC_SSE_URL: ${NEXT_PUBLIC_SSE_URL:-/api/stream/events}
+      NEXT_PUBLIC_OPS_SSE_URL: ${NEXT_PUBLIC_OPS_SSE_URL:-/api/ops/events/stream}
+    ports:
+      - "${WEB_UI_PORT:-3001}:3001"
 
 volumes:
   timescaledb_data:

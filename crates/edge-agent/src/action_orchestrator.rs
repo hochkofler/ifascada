@@ -1,4 +1,5 @@
 use crate::mqtt_bridge::MqttBridgeConfig;
+use crate::ticket_sequence::TicketSequenceStore;
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
@@ -25,14 +26,15 @@ pub struct ActionRequest {
 pub struct BufferedWeightSample {
     pub value: f64,
     pub unit: String,
-    pub raw: String,
     pub ts: chrono::DateTime<chrono::Utc>,
+    pub decimals: Option<usize>,
 }
 
 #[derive(Default)]
 pub struct ActionRuntimeState {
     pub weight_buffers: HashMap<String, Vec<BufferedWeightSample>>,
     pub processed_requests: HashMap<String, chrono::DateTime<chrono::Utc>>,
+    pub printed_snapshots: HashMap<String, serde_json::Value>,
 }
 
 #[async_trait]
@@ -130,21 +132,26 @@ pub fn action_buffer_id(payload: &serde_json::Value) -> String {
     }
 
     let trig = payload.get("trigger");
-    let auto_id = trig
-        .and_then(|t| t.get("automation_id"))
+    let measured_device_id = payload
+        .get("measurement_device_id")
         .and_then(|v| v.as_str())
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty());
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            trig.and_then(|t| t.get("device_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        });
     let tag_id = trig
         .and_then(|t| t.get("tag_id"))
         .and_then(|v| v.as_str())
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
 
-    match (auto_id, tag_id) {
-        (Some(a), Some(t)) => format!("auto:{}:tag:{}", a, t),
+    match (measured_device_id, tag_id) {
+        (Some(d), _) => format!("device:{}", d),
         (None, Some(t)) => format!("tag:{}", t),
-        (Some(a), None) => format!("auto:{}", a),
         _ => "default".to_string(),
     }
 }
@@ -157,6 +164,46 @@ fn action_buffer_max(payload: &serde_json::Value) -> usize {
         .unwrap_or(500)
 }
 
+fn count_fraction_digits_in_numeric_token(text: &str) -> Option<usize> {
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.is_empty() {
+        return None;
+    }
+    let token = compact
+        .trim_start_matches('+')
+        .trim_start_matches('-')
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
+        .collect::<String>();
+    if token.is_empty() {
+        return None;
+    }
+    let dot = token.find('.')?;
+    Some(token[dot + 1..].chars().filter(|ch| ch.is_ascii_digit()).count())
+}
+
+fn detect_value_decimals(value: &serde_json::Value) -> Option<usize> {
+    match value {
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.starts_with('{') && t.ends_with('}') {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(t) {
+                    return detect_value_decimals(&parsed);
+                }
+            }
+            count_fraction_digits_in_numeric_token(t)
+        }
+        serde_json::Value::Object(map) => {
+            map.get("raw")
+                .and_then(|v| v.as_str())
+                .and_then(count_fraction_digits_in_numeric_token)
+                .or_else(|| map.get("value").and_then(detect_value_decimals))
+        }
+        serde_json::Value::Number(n) => count_fraction_digits_in_numeric_token(&n.to_string()),
+        _ => None,
+    }
+}
+
 fn extract_weight_sample(payload: &serde_json::Value) -> Result<BufferedWeightSample, String> {
     let value_json = payload
         .get("trigger")
@@ -167,6 +214,7 @@ fn extract_weight_sample(payload: &serde_json::Value) -> Result<BufferedWeightSa
     let mut value: Option<f64> = None;
     let mut unit: Option<String> = None;
     let mut raw: Option<String> = None;
+    let mut decimals = detect_value_decimals(&value_json);
 
     match value_json {
         serde_json::Value::Number(n) => value = n.as_f64(),
@@ -179,12 +227,14 @@ fn extract_weight_sample(payload: &serde_json::Value) -> Result<BufferedWeightSa
             let t = s.trim();
             if let Ok(v) = t.parse::<f64>() {
                 value = Some(v);
+                decimals = decimals.or_else(|| count_fraction_digits_in_numeric_token(t));
             } else if t.starts_with('{') && t.ends_with('}') {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(t) {
                     if let serde_json::Value::Object(map) = parsed {
                         value = map.get("value").and_then(|v| v.as_f64());
                         unit = map.get("unit").and_then(|v| v.as_str()).map(ToString::to_string);
                         raw = map.get("raw").and_then(|v| v.as_str()).map(ToString::to_string);
+                        decimals = decimals.or_else(|| detect_value_decimals(&serde_json::Value::Object(map)));
                     }
                 }
             } else if !t.is_empty() {
@@ -201,12 +251,14 @@ fn extract_weight_sample(payload: &serde_json::Value) -> Result<BufferedWeightSa
                     let unit_txt = compact[i..].trim().to_string();
                     if let Ok(v) = num.parse::<f64>() {
                         value = Some(v);
+                        decimals = decimals.or_else(|| count_fraction_digits_in_numeric_token(num));
                         if !unit_txt.is_empty() {
                             unit = Some(unit_txt);
                         }
                     }
                 } else if let Ok(v) = compact.parse::<f64>() {
                     value = Some(v);
+                    decimals = decimals.or_else(|| count_fraction_digits_in_numeric_token(&compact));
                 }
             }
         }
@@ -214,14 +266,211 @@ fn extract_weight_sample(payload: &serde_json::Value) -> Result<BufferedWeightSa
     }
 
     let value = value.ok_or_else(|| "unable to extract numeric value from payload".to_string())?;
+    let ts = payload
+        .get("trigger")
+        .and_then(|t| t.get("timestamp"))
+        .or_else(|| payload.get("timestamp"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now);
+    if unit
+        .as_deref()
+        .map(str::trim)
+        .map(|u| u.is_empty())
+        .unwrap_or(true)
+    {
+        if let Some(parsed) = raw
+            .as_deref()
+            .and_then(extract_unit_from_compound_text)
+            .filter(|u| !u.trim().is_empty())
+        {
+            unit = Some(parsed);
+        }
+    }
+    if unit
+        .as_deref()
+        .map(str::trim)
+        .map(|u| u.is_empty())
+        .unwrap_or(true)
+    {
+        if let Some(parsed) = payload
+            .get("trigger")
+            .and_then(|t| t.get("display_value"))
+            .and_then(extract_unit_from_value)
+        {
+            unit = Some(parsed);
+        }
+    }
     let unit = unit.unwrap_or_default();
-    let raw = raw.unwrap_or_else(|| format!("{} {}", value, unit).trim().to_string());
     Ok(BufferedWeightSample {
         value,
         unit,
-        raw,
-        ts: chrono::Utc::now(),
+        ts,
+        decimals,
     })
+}
+
+fn extract_unit_from_compound_text(input: &str) -> Option<String> {
+    let compact: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut split_idx: Option<usize> = None;
+    for (i, ch) in compact.char_indices() {
+        if !(ch.is_ascii_digit() || ch == '+' || ch == '-' || ch == '.') {
+            split_idx = Some(i);
+            break;
+        }
+    }
+    split_idx
+        .and_then(|i| {
+            let unit_txt = compact[i..].trim().to_string();
+            if unit_txt.is_empty() {
+                None
+            } else {
+                Some(unit_txt)
+            }
+        })
+}
+
+fn extract_unit_from_value(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::Object(map) => map
+            .get("unit")
+            .and_then(|u| u.as_str())
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .map(ToString::to_string),
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.starts_with('{') && t.ends_with('}') {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(t) {
+                    return extract_unit_from_value(&parsed);
+                }
+            }
+            extract_unit_from_compound_text(t)
+        }
+        _ => None,
+    }
+}
+
+fn resolve_measurement_equipo(payload: &serde_json::Value) -> String {
+    let trigger = payload.get("trigger");
+    payload
+        .get("measurement_device_name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            trigger
+                .and_then(|t| t.get("device_name"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+        })
+        .or_else(|| {
+            payload
+                .get("measurement_device_id")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+        })
+        .or_else(|| {
+            trigger
+                .and_then(|t| t.get("device_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+        })
+        .or_else(|| {
+            trigger
+                .and_then(|t| t.get("tag_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+        })
+        .unwrap_or("unknown-source")
+        .to_string()
+}
+
+const RECEIPT_COLUMNS: usize = 40;
+
+fn compact_equipment_ticket_line(equipment: &str, ticket: &str) -> Result<String, String> {
+    let line = format!("EQ:{} T:{}", equipment.trim(), ticket.trim());
+    if line.len() > RECEIPT_COLUMNS {
+        return Err(format!(
+            "equipment/ticket line exceeds {} columns",
+            RECEIPT_COLUMNS
+        ));
+    }
+    Ok(line)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compact_equipment_ticket_line;
+
+    #[test]
+    fn compact_equipment_line_fits_lcc_ticket_in_40_columns() {
+        let line = compact_equipment_ticket_line("CC-IN-BALA13-21", "LCC01-0000001").unwrap();
+        assert_eq!(line, "EQ:CC-IN-BALA13-21 T:LCC01-0000001");
+        assert!(line.len() <= 40);
+    }
+
+    #[test]
+    fn compact_equipment_line_rejects_overflow() {
+        assert!(compact_equipment_ticket_line(&"X".repeat(40), "LCC01-0000001").is_err());
+    }
+}
+
+
+fn extract_text_from_payload_or_args(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            payload
+                .get("args")
+                .and_then(|v| v.get(key))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(ToString::to_string)
+        })
+}
+
+fn extract_i64_from_payload_or_args(payload: &serde_json::Value, key: &str) -> Option<i64> {
+    payload
+        .get(key)
+        .and_then(|v| v.as_i64())
+        .or_else(|| payload.get("args").and_then(|v| v.get(key)).and_then(|v| v.as_i64()))
+}
+
+fn derive_print_job_id_from_request_id(request_id: Option<&str>) -> Option<String> {
+    let rid = request_id?.trim();
+    if rid.is_empty() {
+        return None;
+    }
+    if let Some((prefix, suffix)) = rid.rsplit_once('-') {
+        if !prefix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+            return Some(prefix.to_string());
+        }
+    }
+    Some(rid.to_string())
+}
+
+fn derive_print_id(cfg: &MqttBridgeConfig, req: &ActionRequest) -> Result<String, String> {
+    if let Some(n) = extract_i64_from_payload_or_args(&req.payload, "ticket_no") {
+        return Ok(n.to_string());
+    }
+    if let Some(n) = extract_i64_from_payload_or_args(&req.payload, "print_id") {
+        return Ok(format!("{:06}", n.rem_euclid(1_000_000)));
+    }
+    if let Some(s) = extract_text_from_payload_or_args(&req.payload, "print_id") {
+        return Ok(s);
+    }
+    TicketSequenceStore::open(&cfg.ticket_sequence_path)?.next_ticket_id(&cfg.agent)
 }
 
 fn render_action_lines(payload: &serde_json::Value) -> Vec<String> {
@@ -553,39 +802,12 @@ impl ActionExecutor for PrintEscposFromBufferExecutor {
         if samples.is_empty() {
             return Err(format!("buffer '{}' is empty", buffer_id));
         }
-        let print_id_num = req
-            .payload
-            .get("print_id")
-            .and_then(|v| v.as_i64())
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis().rem_euclid(1_000_000));
-        let print_id = format!("{:06}", print_id_num);
-        let device_name = req
-            .payload
-            .get("device")
-            .and_then(|d| d.get("name"))
-            .and_then(|v| v.as_str())
-            .or_else(|| req.payload.get("device_name").and_then(|v| v.as_str()))
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(ToString::to_string)
-            .or_else(|| {
-                req.payload
-                    .get("device")
-                    .and_then(|d| d.get("id"))
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .map(ToString::to_string)
-            })
-            .or_else(|| {
-                req.payload
-                    .get("device_id")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .map(ToString::to_string)
-            })
-            .unwrap_or_else(|| "unknown-device".to_string());
+        let print_id = derive_print_id(cfg, req)?;
+        let print_job_id = extract_text_from_payload_or_args(&req.payload, "print_job_id")
+            .or_else(|| derive_print_job_id_from_request_id(req.request_id.as_deref()));
+        let ticket_no = extract_i64_from_payload_or_args(&req.payload, "ticket_no")
+            .or_else(|| print_id.parse::<i64>().ok());
+        let measured_device = resolve_measurement_equipo(&req.payload);
         let description = req
             .payload
             .get("description")
@@ -601,12 +823,19 @@ impl ActionExecutor for PrintEscposFromBufferExecutor {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .unwrap_or("___________________");
-        let decimals = req
+        let forced_decimals = req
             .payload
             .get("decimals")
             .and_then(|v| v.as_u64())
-            .map(|v| v.min(6) as usize)
-            .unwrap_or(4);
+            .map(|v| v.min(6) as usize);
+        let summary_decimals = forced_decimals.unwrap_or_else(|| {
+            samples
+                .iter()
+                .filter_map(|s| s.decimals)
+                .max()
+                .unwrap_or(4)
+                .min(6)
+        });
         let count = samples.len();
         let sum: f64 = samples.iter().map(|s| s.value).sum();
         let avg: f64 = if count > 0 { sum / count as f64 } else { 0.0 };
@@ -626,6 +855,31 @@ impl ActionExecutor for PrintEscposFromBufferExecutor {
                 let u = s.unit.trim();
                 if u.is_empty() { None } else { Some(u.to_string()) }
             })
+            .or_else(|| {
+                req.payload
+                    .get("trigger")
+                    .and_then(|t| t.get("value"))
+                    .and_then(|v| v.as_str())
+                    .and_then(extract_unit_from_compound_text)
+            })
+            .or_else(|| {
+                req.payload
+                    .get("trigger")
+                    .and_then(|t| t.get("value"))
+                    .and_then(|v| v.get("unit"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(ToString::to_string)
+            })
+            .or_else(|| {
+                req.payload
+                    .get("unit")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(ToString::to_string)
+            })
             .unwrap_or_default();
         let values: Vec<f64> = samples.iter().map(|s| s.value).collect();
         let std = std_dev_sample(&values);
@@ -641,14 +895,7 @@ impl ActionExecutor for PrintEscposFromBufferExecutor {
                 pad_left(description, 26)
             ),
             format!("{}{}", pad_right("Lote:", 12), pad_left(lote, 26)),
-            format!(
-                "{}{}{}{}",
-                pad_right("Equipo:", 12),
-                device_name,
-                pad_left("#", 5),
-                print_id
-            ),
-            format!("BUFFER: {}", buffer_id),
+            compact_equipment_ticket_line(&measured_device, &print_id)?,
             String::new(),
             "===============< Datos >===============".to_string(),
         ];
@@ -656,27 +903,48 @@ impl ActionExecutor for PrintEscposFromBufferExecutor {
             lines.push(format!(
                 "{}{}",
                 pad_right("Inicio:", 12),
-                pad_left(&first.format("%d/%m/%Y %H:%M:%S").to_string(), 26)
+                pad_left(
+                    &first
+                        .with_timezone(&chrono::Local)
+                        .format("%d/%m/%Y %H:%M:%S")
+                        .to_string(),
+                    26
+                )
             ));
             lines.push(format!(
                 "{}{}",
                 pad_right("Fin:", 12),
-                pad_left(&last.format("%d/%m/%Y %H:%M:%S").to_string(), 26)
+                pad_left(
+                    &last
+                        .with_timezone(&chrono::Local)
+                        .format("%d/%m/%Y %H:%M:%S")
+                        .to_string(),
+                    26
+                )
             ));
         }
+        let mut sample_rows = Vec::with_capacity(samples.len());
         for (i, s) in samples.iter().enumerate() {
             let unit_part = if s.unit.is_empty() {
-                "".to_string()
+                unit.clone()
             } else {
                 s.unit.clone()
             };
-            let value_txt = format!("{:.*}", decimals, s.value);
+            let row_decimals = forced_decimals.unwrap_or_else(|| s.decimals.unwrap_or(summary_decimals));
+            let value_txt = format!("{:.*}", row_decimals.min(6), s.value);
             lines.push(format!(
                 "{}{}{}",
                 pad_right(&format!("N{:02}", i + 1), 12),
                 pad_left(&value_txt, 20),
                 pad_left(&unit_part, 2)
             ));
+            sample_rows.push(json!({
+                "index": i + 1,
+                "value": s.value,
+                "unit": unit_part,
+                "timestamp": s.ts.to_rfc3339(),
+                "display_value": format!("{} {}", value_txt, unit_part.trim()),
+            }));
         }
         lines.push(String::new());
         lines.push("===========< Estadisticas >===========".to_string());
@@ -685,45 +953,90 @@ impl ActionExecutor for PrintEscposFromBufferExecutor {
         lines.push(format!(
             "{}{}{}",
             pad_right("Min:", 12),
-            pad_left(&format!("{:.*}", decimals, min), 20),
+            pad_left(&format!("{:.*}", summary_decimals, min), 20),
             pad_left(&unit, 2)
         ));
         lines.push(format!(
             "{}{}{}",
             pad_right("Max:", 12),
-            pad_left(&format!("{:.*}", decimals, max), 20),
+            pad_left(&format!("{:.*}", summary_decimals, max), 20),
             pad_left(&unit, 2)
         ));
         lines.push(format!(
             "{}{}{}",
             pad_right("Promedio:", 12),
-            pad_left(&format!("{:.*}", decimals, avg), 20),
+            pad_left(&format!("{:.*}", summary_decimals, avg), 20),
             pad_left(&unit, 2)
         ));
         lines.push(format!(
             "{}{}{}",
             pad_right("Std:", 12),
-            pad_left(&format!("{:.*}", decimals, std), 20),
+            pad_left(&format!("{:.*}", summary_decimals, std), 20),
             pad_left(&unit, 2)
         ));
         lines.push(format!(
             "{}{}{}",
             pad_right("CV:", 12),
-            pad_left(&format!("{:.*}", decimals, cv), 20),
+            pad_left(&format!("{:.*}", summary_decimals, cv), 20),
             pad_left("%", 2)
         ));
         lines.push("--------------------------------------".to_string());
         lines.push(String::new());
         lines.push(String::new());
         lines.push("Firma_________________________________".to_string());
-        execute_print_escpos_lines(
+        let printed_at_utc = chrono::Utc::now();
+        let edge_tz_offset_minutes = chrono::Local::now().offset().local_minus_utc() / 60;
+        let result = execute_print_escpos_lines(
             cfg,
             &req.payload,
             req.request_id.as_deref(),
             &req.action_type,
             &lines,
         )
-        .await
+        .await;
+
+        if result.is_ok() {
+            if let Some(job_id) = print_job_id {
+                let snapshot = json!({
+                    "schema_version": 1,
+                    "print_job_id": job_id,
+                    "ticket_no": ticket_no,
+                    "print_id": print_id,
+                    "request_id": req.request_id,
+                    "action_type": req.action_type,
+                    "measurement_device": measured_device,
+                    "description": description,
+                    "batch": lote,
+                    "buffer_id": buffer_id,
+                    "sample_count": count,
+                    "unit": unit,
+                    "summary": {
+                        "count": count,
+                        "sum": sum,
+                        "avg": avg,
+                        "min": min,
+                        "max": max,
+                        "std": std,
+                        "cv": cv,
+                    },
+                    "first_ts": first_ts.map(|v| v.to_rfc3339()),
+                    "last_ts": last_ts.map(|v| v.to_rfc3339()),
+                    "samples": sample_rows,
+                    "lines": lines,
+                    "printed_at_utc": printed_at_utc.to_rfc3339(),
+                    "edge_tz_offset_minutes": edge_tz_offset_minutes,
+                });
+                let mut st = state.lock().await;
+                st.printed_snapshots.insert(job_id, snapshot);
+                if st.printed_snapshots.len() > 256 {
+                    if let Some(oldest_key) = st.printed_snapshots.keys().next().cloned() {
+                        st.printed_snapshots.remove(&oldest_key);
+                    }
+                }
+            }
+        }
+
+        result
     }
 }
 
@@ -828,6 +1141,24 @@ impl ActionExecutor for DeviceCommandExecutor {
             .ok_or_else(|| "device.command args must be object".to_string())?;
         obj.entry("device_id".to_string())
             .or_insert_with(|| serde_json::Value::String(device_id.to_string()));
+        if let Some(trigger) = req.payload.get("trigger").cloned() {
+            obj.entry("trigger".to_string()).or_insert(trigger);
+        }
+        if let Some(v) = req.payload.get("measurement_device_id").cloned() {
+            obj.entry("measurement_device_id".to_string()).or_insert(v);
+        }
+        if let Some(v) = req.payload.get("measurement_device_name").cloned() {
+            obj.entry("measurement_device_name".to_string()).or_insert(v);
+        }
+        if let Some(v) = req.payload.get("print_job_id").cloned() {
+            obj.entry("print_job_id".to_string()).or_insert(v);
+        }
+        if let Some(v) = req.payload.get("ticket_no").cloned() {
+            obj.entry("ticket_no".to_string()).or_insert(v);
+        }
+        if let Some(v) = req.payload.get("print_id").cloned() {
+            obj.entry("print_id".to_string()).or_insert(v);
+        }
         inject_device_transport_defaults(&req.payload, obj);
 
         let sub_req = if command == "print" || command == "print.escpos" {
