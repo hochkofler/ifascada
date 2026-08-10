@@ -17,7 +17,7 @@ Captured device example at 9600 8N1:
 
 ## Configuration
 
-Use `crates/edge-agent/config/bootstrap.serial-phsj5.example.json`. It is configured for `COM5` and can be selected with `EDGE_BOOTSTRAP_PATH`.
+Use `crates/edge-agent/config/bootstrap.serial-phsj5.example.json` as a deployment example and select it with `EDGE_BOOTSTRAP_PATH`. Its `serial.port`, connection/tag IDs and `device_id` values are ordinary configuration: `COM5` and the `phsj5`-based identifiers are illustrative and can be replaced without code changes.
 
 The connection uses:
 
@@ -38,7 +38,7 @@ Each `field:<name>` produces the existing compound JSON envelope:
 
 The configured per-tag pipeline uses `extract: compound_json` to expose the typed value while preserving unit and raw context. No new pipeline or multi-tag abstraction is required.
 
-The `raw` source publishes the complete four-line print. All five tags share `device_id = dev_phsj5_01` and use `update_mode = on_message`, so repeated valid readings are not suppressed.
+The `raw` source publishes the complete four-line print. All five tags share the configured device ID and use `update_mode = on_message`, so repeated valid readings are not suppressed.
 
 ## Compatibility
 

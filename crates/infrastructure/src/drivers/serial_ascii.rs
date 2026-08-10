@@ -1014,11 +1014,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_configurable_fields_route_phsj5_measurements_to_independent_tags() {
+    async fn test_configurable_fields_route_measurements_to_independent_tags() {
         let raw_frame = "93.79mV\r\n5.25pH\r\n24.2c\r\n98.82%";
         let connection = Connection::new(
-            ConnectionId::new("conn_phsj5"),
-            "PHSJ-5".to_string(),
+            ConnectionId::new("conn_multifield_serial"),
+            "Multi-field serial fixture".to_string(),
             DriverType::new("serial_ascii").unwrap(),
             json!({
                 "parser": {
@@ -1120,7 +1120,7 @@ mod tests {
     }
 
     #[test]
-    fn test_block_frame_configuration_drains_complete_phsj5_print() {
+    fn test_block_frame_configuration_drains_complete_multifield_print() {
         let config: FrameConfig = serde_json::from_value(json!({
             "mode": "block",
             "start_regex": "(?m)^[+-]?[0-9]+(?:\\.[0-9]+)?mV\\r?$",

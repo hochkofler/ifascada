@@ -667,20 +667,20 @@ mod tests {
     }
 
     #[test]
-    fn test_phsj5_bootstrap_routes_one_device_print_to_five_tags() {
+    fn test_multifield_serial_bootstrap_routes_one_device_print_to_five_tags() {
         let raw = include_str!("../config/bootstrap.serial-phsj5.example.json");
         let cfg: BootstrapConfig = serde_json::from_str(raw).expect("valid PHSJ-5 bootstrap");
         let connection = &cfg.connections[0];
 
         assert_eq!(connection.driver_type, "SerialAscii");
-        assert_eq!(connection.transport["serial"]["port"], "COM5");
+        assert!(connection.transport["serial"]["port"]
+            .as_str()
+            .is_some_and(|port| !port.trim().is_empty()));
         assert_eq!(connection.transport["frame"]["mode"], "block");
         assert_eq!(connection.transport["parser"]["version"], 2);
         assert_eq!(connection.tags.len(), 5);
-        assert!(connection
-            .tags
-            .iter()
-            .all(|tag| tag.device_id == "dev_phsj5_01"));
+        let device_id = &connection.tags[0].device_id;
+        assert!(connection.tags.iter().all(|tag| &tag.device_id == device_id));
         assert!(connection
             .tags
             .iter()
