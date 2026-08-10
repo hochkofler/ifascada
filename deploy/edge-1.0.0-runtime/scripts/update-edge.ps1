@@ -10,6 +10,8 @@ param(
     [int]$SupportedConfigSchemaVersion = 1,
     [ValidateRange(0, 300)]
     [int]$HealthTimeoutSeconds = 20,
+    [ValidateRange(1, 60)]
+    [int]$FileReleaseTimeoutSeconds = 15,
     [ScriptBlock]$HealthCheckScript,
     [string]$TestRuntimeEventLog,
     [switch]$TestSkipAdminCheck
@@ -99,6 +101,28 @@ function Get-ExactEdgeProcesses([string]$ExecutablePath) {
         })
 }
 
+function Wait-FileReleased([string]$Path, [int]$TimeoutSeconds) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $lastError = $null
+    do {
+        try {
+            $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            $stream.Dispose()
+            return
+        } catch [IO.IOException] {
+            $win32Code = $_.Exception.HResult -band 0xFFFF
+            if ($win32Code -ne 32 -and $win32Code -ne 33) { throw }
+            $lastError = $_
+        } catch {
+            throw
+        }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            throw "Installed executable remained locked for $TimeoutSeconds seconds: $($lastError.Exception.Message)"
+        }
+        Start-Sleep -Milliseconds 100
+    } while ($true)
+}
+
 function Get-ExactService([string]$Name) {
     $matches = @(Get-Service -ErrorAction Stop | Where-Object { $_.Name.Equals($Name, [StringComparison]::OrdinalIgnoreCase) })
     if ($matches.Count -gt 1) { throw "More than one service matched exact name '$Name'." }
@@ -177,7 +201,7 @@ function Test-EdgeHealthy([string]$Mode, [string]$ExecutablePath, [int]$TimeoutS
             if (& $CustomCheck) { return $true }
         } elseif ($Mode -eq "test") {
             return $true
-        } elseif ((Get-ExactEdgeProcesses -ExecutablePath $ExecutablePath).Count -gt 0) {
+        } elseif (@(Get-ExactEdgeProcesses -ExecutablePath $ExecutablePath).Count -gt 0) {
             return $true
         }
         if ([DateTime]::UtcNow -ge $deadline) { break }
@@ -289,6 +313,7 @@ $replacementStarted = $false
 try {
     $runtimeMutationAttempted = $true
     Stop-EdgeRuntime -Runtime $runtime -ExecutablePath $exeTarget -TestEventLog $TestRuntimeEventLog -Task $TaskName -ScheduledTaskPath $TaskPath
+    Wait-FileReleased -Path $exeTarget -TimeoutSeconds $FileReleaseTimeoutSeconds
 
     New-Item -ItemType Directory -Force -Path (Split-Path -Path $backupDir -Parent) | Out-Null
     New-Item -ItemType Directory -Path $backupDir | Out-Null
@@ -333,6 +358,7 @@ try {
         try {
             if ($replacementStarted) {
                 Stop-EdgeRuntime -Runtime $runtime -ExecutablePath $exeTarget -TestEventLog $TestRuntimeEventLog -Task $TaskName -ScheduledTaskPath $TaskPath
+                Wait-FileReleased -Path $exeTarget -TimeoutSeconds $FileReleaseTimeoutSeconds
                 if (-not (Test-Path -LiteralPath $backupBinary -PathType Leaf)) {
                     throw "Previous binary backup is unavailable."
                 }

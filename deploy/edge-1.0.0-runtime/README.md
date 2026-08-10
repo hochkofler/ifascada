@@ -1,4 +1,4 @@
-# edge-runtime (release 1.1.0)
+# edge-runtime (release 1.1.1)
 
 Paquete para instalar `edge-agent` en Windows sin Docker. Modo recomendado: tarea programada (`Scheduled Task`) para ejecucion al iniciar el equipo.
 
@@ -112,6 +112,8 @@ Antes de detener el edge, el script valida el formato del manifiesto, la compati
 3. Sustituye el binario y vuelve a iniciar el mismo runtime.
 4. Espera hasta 20 segundos por el nuevo proceso.
 5. Si el proceso no aparece, restaura el binario y manifiesto anteriores y reinicia el runtime.
+
+Antes de reemplazar o restaurar, espera de forma acotada a que Windows libere completamente el ejecutable detenido.
 
 No modifica `edge.env`, `bootstrap.json`, `runtime_config.signed.json`, `mqtt_outbox.db`, recibos ni logs. Ademas rechaza solapamientos o junctions entre las raices de paquete, instalacion y datos. En instalaciones antiguas sin manifiesto, el primer respaldo queda bajo `releases\unknown`.
 

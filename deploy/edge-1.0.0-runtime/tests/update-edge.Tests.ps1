@@ -313,4 +313,108 @@ Describe "update-edge.ps1 transaction" {
         [IO.File]::ReadAllText($fixture.Installed) | Should Be "old-binary"
         Test-Path (Join-Path $fixture.Install "releases") | Should Be $false
     }
+
+    It "accepts exactly one matching edge process as healthy" {
+        $fixture = New-UpdateFixture -Root (Join-Path $TestDrive "single-health-process")
+        $targetTask = New-CimInstance -Namespace Root/Microsoft/Windows/TaskScheduler -ClassName MSFT_ScheduledTask -ClientOnly -Property @{ TaskName = "ifascada-edge"; TaskPath = "\"; State = 3 }
+        $script:runtimeStarted = $false
+        Mock Get-Service { @() }
+        Mock Get-ScheduledTask { @($targetTask) }
+        Mock Stop-ScheduledTask { $script:runtimeStarted = $false }
+        Mock Start-ScheduledTask { $script:runtimeStarted = $true }
+        Mock Stop-Process { }
+        Mock Get-CimInstance {
+            if ($script:runtimeStarted) {
+                [pscustomobject]@{ ProcessId = 4242; ExecutablePath = $fixture.Installed }
+            } else {
+                @()
+            }
+        }
+
+        & $updater -PackageRoot $fixture.Package -InstallRoot $fixture.Install -DataRoot $fixture.Data -RuntimeMode task -TaskName "ifascada-edge" -TaskPath "\" -TestSkipAdminCheck
+
+        [IO.File]::ReadAllText($fixture.Installed) | Should Be "new-binary"
+        Assert-MockCalled Start-ScheduledTask -Times 1
+    }
+
+    It "waits for the installed executable lock to be released" {
+        $fixture = New-UpdateFixture -Root (Join-Path $TestDrive "locked-executable")
+        $marker = Join-Path $TestDrive "locked-executable\lock-ready"
+        $job = Start-Job -ScriptBlock {
+            param($ExecutablePath, $MarkerPath)
+            $stream = [IO.File]::Open($ExecutablePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+            try {
+                [IO.File]::WriteAllText($MarkerPath, "ready")
+                Start-Sleep -Seconds 2
+            } finally {
+                $stream.Dispose()
+            }
+        } -ArgumentList $fixture.Installed, $marker
+
+        try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(5)
+            while (-not (Test-Path $marker) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+            Test-Path $marker | Should Be $true
+
+            & $updater -PackageRoot $fixture.Package -InstallRoot $fixture.Install -DataRoot $fixture.Data -RuntimeMode test -HealthCheckScript { $true }
+
+            [IO.File]::ReadAllText($fixture.Installed) | Should Be "new-binary"
+        } finally {
+            Wait-Job -Job $job -Timeout 5 | Out-Null
+            Receive-Job -Job $job -ErrorAction SilentlyContinue | Out-Null
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "waits for a new-binary lock before restoring during rollback" {
+        $fixture = New-UpdateFixture -Root (Join-Path $TestDrive "locked-rollback")
+        $marker = Join-Path $TestDrive "locked-rollback\lock-ready"
+        $global:ifascadaRollbackLockJob = $null
+        $global:ifascadaRollbackExecutable = $fixture.Installed
+        $global:ifascadaRollbackMarker = $marker
+        $healthCheck = {
+            if ($null -eq $global:ifascadaRollbackLockJob) {
+                $global:ifascadaRollbackLockJob = Start-Job -ScriptBlock {
+                    param($ExecutablePath, $MarkerPath)
+                    $stream = [IO.File]::Open($ExecutablePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+                    try {
+                        [IO.File]::WriteAllText($MarkerPath, "ready")
+                        Start-Sleep -Seconds 2
+                    } finally {
+                        $stream.Dispose()
+                    }
+                } -ArgumentList $global:ifascadaRollbackExecutable, $global:ifascadaRollbackMarker
+                $deadline = [DateTime]::UtcNow.AddSeconds(5)
+                while (-not (Test-Path $global:ifascadaRollbackMarker) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+            }
+            return $false
+        }
+
+        $thrown = $false
+        $lockReady = $false
+        $jobState = $null
+        $jobReason = $null
+        try {
+            & $updater -PackageRoot $fixture.Package -InstallRoot $fixture.Install -DataRoot $fixture.Data -RuntimeMode test -HealthTimeoutSeconds 0 -HealthCheckScript $healthCheck
+        } catch {
+            $thrown = $true
+        } finally {
+            if ($null -ne $global:ifascadaRollbackLockJob) {
+                Wait-Job -Job $global:ifascadaRollbackLockJob -Timeout 5 | Out-Null
+                $lockReady = Test-Path $marker
+                $jobState = $global:ifascadaRollbackLockJob.State
+                $jobReason = $global:ifascadaRollbackLockJob.ChildJobs[0].JobStateInfo.Reason
+                Receive-Job -Job $global:ifascadaRollbackLockJob -ErrorAction SilentlyContinue | Out-Null
+                Remove-Job -Job $global:ifascadaRollbackLockJob -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Variable -Name ifascadaRollbackLockJob,ifascadaRollbackExecutable,ifascadaRollbackMarker -Scope Global -ErrorAction SilentlyContinue
+        }
+
+        $thrown | Should Be $true
+        $lockReady | Should Be $true
+        $jobState | Should Be "Completed"
+        $jobReason | Should Be $null
+        [IO.File]::ReadAllText($fixture.Installed) | Should Be "old-binary"
+        (Get-Content (Join-Path $fixture.Install "release-manifest.json") -Raw | ConvertFrom-Json).version | Should Be "1.0.0"
+    }
 }
