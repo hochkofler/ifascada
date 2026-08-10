@@ -18,6 +18,7 @@ Thumbs.db
 *.exe
 *.log
 last_known.json
+deploy/edge-1.0.0-runtime/release-manifest.json
 
 # Environment
 .env

@@ -1,0 +1,10 @@
+{
+  "manifest_version": 1,
+  "version": "1.1.0",
+  "config_schema_version": 1,
+  "minimum_central_version": "1.0.0",
+  "binary": {
+    "path": "bin/edge-agent.exe",
+    "sha256": "replace-with-64-character-lowercase-sha256"
+  }
+}
