@@ -1,0 +1,135 @@
+{
+  "connections": [
+    {
+      "id": "conn_phsj5_01",
+      "name": "INE PHSJ-5 pH Meter",
+      "driver_type": "SerialAscii",
+      "timeout_ms": 500,
+      "reconnect_delay_ms": 1000,
+      "max_retries": null,
+      "transport": {
+        "serial": {
+          "port": "COM5",
+          "baud_rate": 9600,
+          "data_bits": 8,
+          "stop_bits": 1,
+          "parity": "N"
+        },
+        "frame": {
+          "mode": "block",
+          "start_regex": "(?m)^[+-]?[0-9]+(?:\\.[0-9]+)?mV\\r?$",
+          "end_regex": "(?m)^[+-]?[0-9]+(?:\\.[0-9]+)?%\\r?$",
+          "max_len": 512
+        },
+        "parser": {
+          "version": 2,
+          "fields": {
+            "potential_mv": {
+              "regex": "(?m)^([+-]?[0-9]+(?:\\.[0-9]+)?)(mV)$",
+              "value_group": 1,
+              "unit_group": 2,
+              "value_type": "float",
+              "required": true
+            },
+            "ph": {
+              "regex": "(?m)^([+-]?[0-9]+(?:\\.[0-9]+)?)(pH)$",
+              "value_group": 1,
+              "unit_group": 2,
+              "value_type": "float",
+              "required": true
+            },
+            "temperature_c": {
+              "regex": "(?m)^([+-]?[0-9]+(?:\\.[0-9]+)?)(c)$",
+              "value_group": 1,
+              "unit_group": 2,
+              "value_type": "float",
+              "required": true
+            },
+            "electrode_efficiency_pct": {
+              "regex": "(?m)^([+-]?[0-9]+(?:\\.[0-9]+)?)(%)$",
+              "value_group": 1,
+              "unit_group": 2,
+              "value_type": "float",
+              "required": true
+            }
+          }
+        },
+        "read_timeout_ms": 50,
+        "tag_map": {
+          "tag_phsj5_potential_mv": "field:potential_mv",
+          "tag_phsj5_ph": "field:ph",
+          "tag_phsj5_temperature_c": "field:temperature_c",
+          "tag_phsj5_electrode_efficiency_pct": "field:electrode_efficiency_pct",
+          "tag_phsj5_raw": "raw"
+        }
+      },
+      "tags": [
+        {
+          "id": "tag_phsj5_potential_mv",
+          "name": "PHSJ-5 Potential",
+          "device_id": "dev_phsj5_01",
+          "source": "field:potential_mv",
+          "value_type": "float",
+          "update_mode": "on_message",
+          "metadata_json": {
+            "pipeline": {
+              "extract": "compound_json",
+              "range": { "min": -2000.0, "max": 2000.0 }
+            }
+          }
+        },
+        {
+          "id": "tag_phsj5_ph",
+          "name": "PHSJ-5 pH",
+          "device_id": "dev_phsj5_01",
+          "source": "field:ph",
+          "value_type": "float",
+          "update_mode": "on_message",
+          "metadata_json": {
+            "pipeline": {
+              "extract": "compound_json",
+              "range": { "min": 0.0, "max": 14.0 }
+            }
+          }
+        },
+        {
+          "id": "tag_phsj5_temperature_c",
+          "name": "PHSJ-5 Temperature",
+          "device_id": "dev_phsj5_01",
+          "source": "field:temperature_c",
+          "value_type": "float",
+          "update_mode": "on_message",
+          "metadata_json": {
+            "pipeline": {
+              "extract": "compound_json",
+              "range": { "min": -10.0, "max": 150.0 }
+            }
+          }
+        },
+        {
+          "id": "tag_phsj5_electrode_efficiency_pct",
+          "name": "PHSJ-5 Electrode Efficiency",
+          "device_id": "dev_phsj5_01",
+          "source": "field:electrode_efficiency_pct",
+          "value_type": "float",
+          "update_mode": "on_message",
+          "metadata_json": {
+            "pipeline": {
+              "extract": "compound_json",
+              "range": { "min": 0.0, "max": 200.0 }
+            }
+          }
+        },
+        {
+          "id": "tag_phsj5_raw",
+          "name": "PHSJ-5 Raw Print",
+          "device_id": "dev_phsj5_01",
+          "source": "raw",
+          "value_type": "string",
+          "update_mode": "on_message",
+          "metadata_json": {}
+        }
+      ]
+    }
+  ]
+}
