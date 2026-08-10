@@ -940,7 +940,11 @@ fn extract_block_frame(
     end_regex: &Regex,
     max_len: usize,
 ) -> Option<Vec<u8>> {
-    let text = match std::str::from_utf8(buffer) {
+    let searchable = buffer
+        .iter()
+        .map(|byte| if *byte == b'\r' { b'\n' } else { *byte })
+        .collect::<Vec<_>>();
+    let text = match std::str::from_utf8(&searchable) {
         Ok(text) => text,
         Err(_) => {
             if buffer.len() > max_len {
@@ -961,7 +965,11 @@ fn extract_block_frame(
         buffer.drain(..start_offset);
     }
 
-    let text = std::str::from_utf8(buffer).ok()?;
+    let searchable = buffer
+        .iter()
+        .map(|byte| if *byte == b'\r' { b'\n' } else { *byte })
+        .collect::<Vec<_>>();
+    let text = std::str::from_utf8(&searchable).ok()?;
     let Some(end) = end_regex.find_at(text, start_end) else {
         if buffer.len() > max_len {
             buffer.clear();
@@ -1089,6 +1097,42 @@ mod tests {
             assert_eq!(parsed["raw"], expected_raw);
         }
         assert_eq!(values["tag_raw"], TagValue::String(raw_frame.to_string()));
+    }
+
+    #[test]
+    fn test_ph_meter_example_parses_captured_print_ticket() {
+        let bootstrap: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../edge-agent/config/bootstrap.serial-phsj5.example.json"
+        ))
+        .unwrap();
+        let config: SerialAsciiConfig =
+            serde_json::from_value(bootstrap["connections"][0]["transport"].clone()).unwrap();
+        let framing = compile_frame(&config.frame).unwrap();
+        let parser = compile_parser(&config.parser).unwrap();
+        let outputs = build_output_map(&config.tag_map).unwrap();
+        validate_output_map(&outputs, &parser).unwrap();
+        let mut buffer = b"\x1b@\x1b1\0\n\r================\rPHSJ-5 pH Meter\rShanghai REX Fac\r        13:39:53\r      2004/12/09\r================\r        94.34mV\r         5.26pH\r         26.8c\r        98.82%\r================\r\r\r".to_vec();
+
+        let frames = drain_serial_frames(&mut buffer, &framing, &config.frame);
+
+        assert_eq!(frames.len(), 1);
+        let frame = String::from_utf8(frames[0].clone()).unwrap();
+        let values = map_frame_to_outputs(&outputs, &parser, &config.parser, &frame);
+        assert_eq!(values.len(), 5);
+        let ph = values
+            .iter()
+            .find(|(tag_id, _)| tag_id == &TagId::new("tag_phsj5_ph"))
+            .unwrap()
+            .1
+            .as_ref()
+            .unwrap();
+        let TagValue::String(ph) = ph else {
+            panic!("expected compound pH value");
+        };
+        let ph: serde_json::Value = serde_json::from_str(ph).unwrap();
+        assert_eq!(ph["value"], 5.26);
+        assert_eq!(ph["unit"], "pH");
+        assert_eq!(ph["raw"], "5.26pH");
     }
 
     #[test]

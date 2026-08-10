@@ -17,36 +17,36 @@
         },
         "frame": {
           "mode": "block",
-          "start_regex": "(?m)^[+-]?[0-9]+(?:\\.[0-9]+)?mV\\r?$",
-          "end_regex": "(?m)^[+-]?[0-9]+(?:\\.[0-9]+)?%\\r?$",
+          "start_regex": "(?m)^[ \\t]*[+-]?[0-9]+(?:\\.[0-9]+)?mV[ \\t]*\\r?$",
+          "end_regex": "(?m)^[ \\t]*[+-]?[0-9]+(?:\\.[0-9]+)?%[ \\t]*\\r?$",
           "max_len": 512
         },
         "parser": {
           "version": 2,
           "fields": {
             "potential_mv": {
-              "regex": "(?m)^([+-]?[0-9]+(?:\\.[0-9]+)?)(mV)$",
+              "regex": "(?m)^[ \\t]*([+-]?[0-9]+(?:\\.[0-9]+)?)(mV)[ \\t]*$",
               "value_group": 1,
               "unit_group": 2,
               "value_type": "float",
               "required": true
             },
             "ph": {
-              "regex": "(?m)^([+-]?[0-9]+(?:\\.[0-9]+)?)(pH)$",
+              "regex": "(?m)^[ \\t]*([+-]?[0-9]+(?:\\.[0-9]+)?)(pH)[ \\t]*$",
               "value_group": 1,
               "unit_group": 2,
               "value_type": "float",
               "required": true
             },
             "temperature_c": {
-              "regex": "(?m)^([+-]?[0-9]+(?:\\.[0-9]+)?)(c)$",
+              "regex": "(?m)^[ \\t]*([+-]?[0-9]+(?:\\.[0-9]+)?)(c)[ \\t]*$",
               "value_group": 1,
               "unit_group": 2,
               "value_type": "float",
               "required": true
             },
             "electrode_efficiency_pct": {
-              "regex": "(?m)^([+-]?[0-9]+(?:\\.[0-9]+)?)(%)$",
+              "regex": "(?m)^[ \\t]*([+-]?[0-9]+(?:\\.[0-9]+)?)(%)[ \\t]*$",
               "value_group": 1,
               "unit_group": 2,
               "value_type": "float",
