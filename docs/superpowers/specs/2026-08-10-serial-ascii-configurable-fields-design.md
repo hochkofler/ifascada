@@ -32,6 +32,7 @@ Parser version 2 adds configurable fields:
         "regex": "(?m)^\\s*([-+]?\\d+(?:\\.\\d+)?)\\s*(pH)\\s*$",
         "value_group": 1,
         "unit_group": 2,
+        "value_type": "float",
         "required": true
       }
     }
@@ -43,7 +44,7 @@ Parser version 2 adds configurable fields:
 }
 ```
 
-Each field regex is evaluated against the complete normalized frame. A field produces the existing compound JSON envelope:
+Each field regex is evaluated against the complete normalized frame. `value_type` accepts `float` (default), `integer`, `string`, or `boolean`; `unit_group` is optional. A field produces the existing compound JSON envelope:
 
 ```json
 {"value":5.25,"unit":"pH","raw":"5.25pH"}
@@ -63,7 +64,8 @@ The mapped tag's existing `compound_json` pipeline then extracts `value`, preser
 
 - Legacy sources remain: `scale:compound`, `scale:value`, `scale:unit`, and `scale:raw`, including their aliases.
 - Version 2 adds `field:<name>` and `raw` sources.
-- Unknown mapped fields or invalid regular expressions fail connection initialization.
+- Unknown mapped fields, unsupported value types, invalid capture groups, or invalid regular expressions fail connection initialization.
+- A captured value that cannot be converted to its configured type returns a tag-level parse error.
 - A missing required field returns a tag-level parse error for its mapped tag.
 - A missing optional field produces no update for that tag.
 - Successfully parsed sibling fields are still emitted when another field is absent or invalid.
