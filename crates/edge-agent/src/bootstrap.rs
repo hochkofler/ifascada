@@ -667,6 +667,39 @@ mod tests {
     }
 
     #[test]
+    fn test_multifield_serial_bootstrap_routes_one_device_print_to_five_tags() {
+        let raw = include_str!("../config/bootstrap.serial-phsj5.example.json");
+        let cfg: BootstrapConfig = serde_json::from_str(raw).expect("valid PHSJ-5 bootstrap");
+        let connection = &cfg.connections[0];
+
+        assert_eq!(connection.driver_type, "SerialAscii");
+        assert!(connection.transport["serial"]["port"]
+            .as_str()
+            .is_some_and(|port| !port.trim().is_empty()));
+        assert_eq!(connection.transport["frame"]["mode"], "block");
+        assert_eq!(connection.transport["parser"]["version"], 2);
+        assert_eq!(connection.tags.len(), 5);
+        let device_id = &connection.tags[0].device_id;
+        assert!(connection.tags.iter().all(|tag| &tag.device_id == device_id));
+        assert!(connection
+            .tags
+            .iter()
+            .all(|tag| { tag.update_mode.as_deref() == Some("on_message") }));
+        assert!(connection.tags.iter().filter(|tag| tag.source != "raw").all(|tag| {
+            tag.metadata_json["pipeline"]["extract"] == "compound_json"
+        }));
+        for source in [
+            "field:potential_mv",
+            "field:ph",
+            "field:temperature_c",
+            "field:electrode_efficiency_pct",
+            "raw",
+        ] {
+            assert!(connection.tags.iter().any(|tag| tag.source == source));
+        }
+    }
+
+    #[test]
     fn test_bootstrap_example_has_writable_modbus_tag_for_e2e() {
         let raw = include_str!("../config/bootstrap.example.json");
         let cfg: BootstrapConfig = serde_json::from_str(raw).expect("valid bootstrap example");
