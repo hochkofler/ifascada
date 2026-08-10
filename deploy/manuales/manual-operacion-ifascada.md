@@ -106,11 +106,13 @@ Select-String -Path $logs `
 **Dónde:** edge Windows. **Privilegios:** usuario. **Impacto:** [LECTURA].
 
 ```powershell
-Test-NetConnection <IP_CENTRAL> -Port 8088
-Test-NetConnection <IP_CENTRAL> -Port 51883
+$centralIp = "192.0.2.10" # Reemplazar por la IP real
+
+Test-NetConnection $centralIp -Port 8088
+Test-NetConnection $centralIp -Port 51883
 
 Invoke-WebRequest `
-    -Uri "http://<IP_CENTRAL>:8088/health/live" `
+    -Uri "http://${centralIp}:8088/health/live" `
     -UseBasicParsing `
     -TimeoutSec 5
 ```
@@ -460,9 +462,11 @@ Un `LastWriteTime` reciente en outbox durante fallas MQTT indica que el edge con
 **Dónde:** carpeta del paquete runtime en el edge. **Privilegios:** administrador. **Impacto:** [CONFIGURACIÓN].
 
 ```powershell
+$centralIp = "192.0.2.10" # Reemplazar por la IP real
+
 powershell -ExecutionPolicy Bypass `
     -File .\scripts\update-edge-endpoints.ps1 `
-    -CentralHost <IP_CENTRAL> `
+    -CentralHost $centralIp `
     -MqttPort 51883 `
     -CentralApiPort 8088
 ```
@@ -604,15 +608,21 @@ Si la API está protegida, usar el mecanismo de autenticación aprobado; no colo
 **[LECTURA]**
 
 ```powershell
+$dbUser = "USUARIO_DB" # Reemplazar
+$dbName = "BASE_DB"    # Reemplazar
+
 docker exec ifascada-timescaledb `
-    pg_isready -U <USUARIO_DB> -d <BASE_DB> -h 127.0.0.1 -p 5432
+    pg_isready -U $dbUser -d $dbName -h 127.0.0.1 -p 5432
 ```
 
 Tamaño de bases:
 
 ```powershell
+$dbUser = "USUARIO_DB" # Reemplazar
+$dbName = "BASE_DB"    # Reemplazar
+
 docker exec ifascada-timescaledb `
-    psql -U <USUARIO_DB> -d <BASE_DB> `
+    psql -U $dbUser -d $dbName `
     -c "SELECT datname, pg_size_pretty(pg_database_size(datname)) FROM pg_database ORDER BY pg_database_size(datname) DESC;"
 ```
 
@@ -689,8 +699,10 @@ Test-NetConnection 127.0.0.1 -Port 51883
 Suscripción de diagnóstico desde un host con `mosquitto_sub`:
 
 ```powershell
+$centralIp = "192.0.2.10" # Reemplazar por la IP real
+
 mosquitto_sub `
-    -h <IP_CENTRAL> `
+    -h $centralIp `
     -p 51883 `
     -t "scada/+/edge/+/health/runtime" `
     -v
@@ -699,10 +711,14 @@ mosquitto_sub `
 Para un edge concreto:
 
 ```powershell
+$centralIp = "192.0.2.10" # Reemplazar por la IP real
+$site = "CODIGO_SITE"     # Reemplazar
+$edgeId = "CODIGO_EDGE"   # Reemplazar
+
 mosquitto_sub `
-    -h <IP_CENTRAL> `
+    -h $centralIp `
     -p 51883 `
-    -t "scada/<SITE>/edge/<EDGE_ID>/#" `
+    -t "scada/$site/edge/$edgeId/#" `
     -v
 ```
 
@@ -764,9 +780,11 @@ No reiniciar TimescaleDB como primera respuesta a un fallo de UI.
 **[LECTURA]**
 
 ```powershell
-Resolve-DnsName <HOST_CENTRAL> -ErrorAction SilentlyContinue
-Test-NetConnection <HOST_CENTRAL> -Port 8088
-Test-NetConnection <HOST_CENTRAL> -Port 51883
+$centralHost = "central.empresa.local" # Reemplazar
+
+Resolve-DnsName $centralHost -ErrorAction SilentlyContinue
+Test-NetConnection $centralHost -Port 8088
+Test-NetConnection $centralHost -Port 51883
 route print
 Get-NetAdapter | Select-Object Name, Status, LinkSpeed
 ```
@@ -793,7 +811,8 @@ Para probar apertura exclusiva, primero detener el edge y cerrar VSPE/terminales
 Stop-ScheduledTask -TaskName "ifascada-edge" -ErrorAction SilentlyContinue
 Stop-Process -Name "edge-agent" -Force -ErrorAction SilentlyContinue
 
-$serial = New-Object System.IO.Ports.SerialPort "<PUERTO_COM>",9600,"None",8,"One"
+$serialPortName = "COM3" # Reemplazar por el puerto que se diagnosticará
+$serial = New-Object System.IO.Ports.SerialPort $serialPortName,9600,"None",8,"One"
 try {
     $serial.Open()
     "PUERTO ABIERTO CORRECTAMENTE"
@@ -853,13 +872,16 @@ Si el edge está `ok` pero no hay muestras:
 Prueba RAW:
 
 ```powershell
+$printerHost = "servidor-impresion" # Reemplazar
+$rawShare = "IFA-SCADA-TMU220-RAW"  # Reemplazar
 $testFile = "$env:TEMP\ifascada-print-test.bin"
 $bytes = @(27,64) + [System.Text.Encoding]::ASCII.GetBytes(
     "PRUEBA RAW IFA SCADA`r`n`r`n`r`n"
 )
 
 [System.IO.File]::WriteAllBytes($testFile,[byte[]]$bytes)
-& cmd.exe /C "copy /B `"$testFile`" `"\\<HOST_IMPRESORA>\<SHARE_RAW>`""
+$printerUnc = "\\$printerHost\$rawShare"
+& cmd.exe /C "copy /B `"$testFile`" `"$printerUnc`""
 "EXIT CODE: $LASTEXITCODE"
 Remove-Item $testFile -Force
 ```
@@ -978,9 +1000,11 @@ signed config edge_id mismatch: expected '<EDGE_NUEVO>' got '<EDGE_ANTERIOR>'
 **Dónde:** host conectado físicamente a la impresora. **Impacto:** [INTERRUPCIÓN].
 
 ```powershell
+$printerQueue = "NOMBRE_COLA" # Reemplazar
+
 Restart-Service Spooler -Force
 Get-Service Spooler
-rundll32 printui.dll,PrintUIEntry /k /n "<NOMBRE_COLA>"
+rundll32 printui.dll,PrintUIEntry /k /n $printerQueue
 ```
 
 **Verificación:** sale la página y la cola vuelve a estado normal.
@@ -998,12 +1022,14 @@ rundll32 printui.dll,PrintUIEntry /k /n "<NOMBRE_COLA>"
 Ejemplo de creación, después de validar nombres:
 
 ```powershell
+$printerPort = "PUERTO_IMPRESORA" # Reemplazar por el puerto de la cola existente
+
 Add-PrinterDriver -Name "Generic / Text Only"
 
 Add-Printer `
     -Name "IFA SCADA TM-U220 RAW" `
     -DriverName "Generic / Text Only" `
-    -PortName "<PUERTO_IMPRESORA>" `
+    -PortName $printerPort `
     -Shared `
     -ShareName "IFA-SCADA-TMU220-RAW"
 ```
@@ -1019,7 +1045,9 @@ Add-Printer `
 **Prueba mínima:**
 
 ```powershell
-Test-NetConnection <HOST_IMPRESORA> -Port 445
+$printerHost = "servidor-impresion" # Reemplazar
+
+Test-NetConnection $printerHost -Port 445
 Get-ScheduledTask -TaskName "ifascada-edge" |
     Select-Object -ExpandProperty Principal |
     Select-Object UserId, LogonType
