@@ -1138,6 +1138,41 @@ async fn publish_on_demand_startup_probe(
     }
 }
 
+/// Subscribes to every inbound command/control topic the bridge listens on.
+///
+/// Must be called after every successful (re)connection, not just the first
+/// one: rumqttc's `MqttOptions` defaults to `clean_session = true`, so the
+/// broker discards this client's subscriptions on every disconnect. Without
+/// re-subscribing here, a transient network blip silently leaves the edge
+/// deaf to inbound commands (manual web-UI actions, config apply, alert ack,
+/// control reset) while outbound publish and local automations keep working
+/// normally, making the failure invisible in the logs.
+async fn subscribe_all_topics(
+    client: &AsyncClient,
+    cmd_topic: &str,
+    action_cmd_topic: &str,
+    alert_ack_topic: &str,
+    config_apply_topic: &str,
+    control_reset_topic: &str,
+) -> anyhow::Result<()> {
+    client
+        .subscribe(cmd_topic, QoS::AtLeastOnce)
+        .await?;
+    client
+        .subscribe(action_cmd_topic, QoS::AtLeastOnce)
+        .await?;
+    client
+        .subscribe(alert_ack_topic, QoS::AtLeastOnce)
+        .await?;
+    client
+        .subscribe(config_apply_topic, QoS::AtLeastOnce)
+        .await?;
+    client
+        .subscribe(control_reset_topic, QoS::AtLeastOnce)
+        .await?;
+    Ok(())
+}
+
 pub async fn run_mqtt_bridge(
     config: MqttBridgeConfig,
     engine: Arc<RuntimeEngine>,
@@ -1190,21 +1225,15 @@ pub async fn run_mqtt_bridge(
     let metrics = Arc::new(BridgeMetrics::default());
     let shared_alert_state = Arc::new(TokioMutex::new(AlertState::default()));
 
-    client
-        .subscribe(cmd_topic.clone(), QoS::AtLeastOnce)
-        .await?;
-    client
-        .subscribe(action_cmd_topic.clone(), QoS::AtLeastOnce)
-        .await?;
-    client
-        .subscribe(alert_ack_topic.clone(), QoS::AtLeastOnce)
-        .await?;
-    client
-        .subscribe(config_apply_topic.clone(), QoS::AtLeastOnce)
-        .await?;
-    client
-        .subscribe(control_reset_topic.clone(), QoS::AtLeastOnce)
-        .await?;
+    subscribe_all_topics(
+        &client,
+        &cmd_topic,
+        &action_cmd_topic,
+        &alert_ack_topic,
+        &config_apply_topic,
+        &control_reset_topic,
+    )
+    .await?;
     info!(
         "mqtt subscriptions ready cmd='{}' cmd_action='{}' alert_ack='{}' config_apply='{}' control_reset='{}'",
         cmd_topic, action_cmd_topic, alert_ack_topic, config_apply_topic, control_reset_topic
@@ -1705,6 +1734,29 @@ pub async fn run_mqtt_bridge(
                     .await
                     {
                         restart_requested = true;
+                    }
+                }
+            }
+            Ok(Event::Incoming(Incoming::ConnAck(connack))) => {
+                if connack.session_present {
+                    debug!("mqtt (re)connected with session_present=true; subscriptions retained by broker");
+                } else {
+                    warn!(
+                        "mqtt (re)connected with session_present=false; re-subscribing all inbound topics"
+                    );
+                    if let Err(e) = subscribe_all_topics(
+                        &client,
+                        &cmd_topic,
+                        &action_cmd_topic,
+                        &alert_ack_topic,
+                        &config_apply_topic,
+                        &control_reset_topic,
+                    )
+                    .await
+                    {
+                        warn!("failed to re-subscribe after mqtt reconnect: {}", e);
+                    } else {
+                        info!("mqtt re-subscription after reconnect completed");
                     }
                 }
             }
@@ -2713,5 +2765,36 @@ mod tests {
             .await
             .expect_err("expected validation error");
         assert!(err.contains("device_id"));
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_all_topics_issues_every_inbound_topic() {
+        // No broker is started on purpose: AsyncClient::subscribe only enqueues
+        // the request on the client's internal channel, it does not wait for a
+        // network round-trip. This guards the exact set of topics re-subscribed
+        // after every (re)connection (see the `ConnAck` handling in
+        // `run_mqtt_bridge`) against accidental omissions/typos, but it cannot
+        // exercise the real reconnect-then-resubscribe flow against a live
+        // broker; that must be verified manually against a real edge (drop and
+        // restore its network path and confirm the
+        // "mqtt re-subscription after reconnect completed" log line appears).
+        let opts = MqttOptions::new("test-resubscribe-client", "127.0.0.1", 1883);
+        let (client, _event_loop) = AsyncClient::new(opts, 100);
+
+        let result = subscribe_all_topics(
+            &client,
+            "scada/plant-a/edge/edge-01/cmd",
+            "scada/plant-a/edge/edge-01/cmd/action",
+            "scada/plant-a/edge/edge-01/cmd/alert/ack",
+            "scada/plant-a/edge/edge-01/cmd/config/apply",
+            "scada/plant-a/edge/edge-01/cmd/control/reset",
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "subscribe_all_topics should succeed without a live connection: {:?}",
+            result.err()
+        );
     }
 }

@@ -26,7 +26,11 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "edge_agent=info,info".to_string()))
         .init();
-    info!("Starting Clean Slate Edge Agent");
+    info!(
+        "Starting Clean Slate Edge Agent version={} git_sha={}",
+        env!("CARGO_PKG_VERSION"),
+        env!("EDGE_AGENT_GIT_SHA")
+    );
 
     let mut registry = DriverRegistry::new();
     registry.register(DriverType::new("Simulator")?, Box::new(SimulatorFactory));
