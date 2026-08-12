@@ -1,5 +1,6 @@
 # Rust
 /target/
+/target_*/
 **/*.rs.bk
 *.pdb
 Cargo.lock
@@ -7,6 +8,7 @@ Cargo.lock
 # IDE
 .vscode/
 .idea/
+.worktrees/
 *.swp
 *.swo
 *~
