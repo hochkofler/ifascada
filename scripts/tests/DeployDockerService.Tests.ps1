@@ -110,3 +110,69 @@ Describe "Copy-ToRemote" {
         $thrown | Should Be $true
     }
 }
+
+Describe "Invoke-DockerServiceDeploy" {
+    BeforeEach {
+        Mock Copy-ToRemote {}
+        Mock Invoke-RemoteCommand {
+            param($TargetHost, $SshUser, $SshKeyPath, $Command)
+            if ($Command -like "type*") { return "CENTRAL_IMAGE=ifascada/central-server:1.0.2" }
+            return ""
+        }
+    }
+
+    It "deploys successfully and does not roll back when the health check passes" {
+        Mock Test-ServiceHealthy { $true }
+
+        Invoke-DockerServiceDeploy -Service "central-server" -TargetHost "192.168.103.154" `
+            -SshUser "ifa" -SshKeyPath "C:\key" -ImageTarLocalPath "C:\image.tar" `
+            -NewImageRef "ifascada/central-server:1.0.3" -HealthUrl "http://192.168.103.154:8088/health/live"
+
+        Assert-MockCalled Copy-ToRemote -Times 1 -Exactly
+        Assert-MockCalled Test-ServiceHealthy -Times 1 -Exactly
+        Assert-MockCalled Invoke-RemoteCommand -ParameterFilter { $Command -like "*1.0.3*" } -Times 1
+    }
+
+    # Wrapped in its own Context: Pester 3.4.0 accumulates a mock's call history across
+    # every It in the same Describe unless each It gets a fresh scope, which a Context
+    # boundary provides. Without this, Test-ServiceHealthy's count here would include the
+    # 1 call already recorded by the previous It, making "-Times 2 -Exactly" spuriously
+    # see 3 calls instead of 2.
+    Context "rollback path" {
+        It "rolls back to the previous image when the health check fails, then succeeds" {
+            Mock Test-ServiceHealthy { $false } -ParameterFilter { $true } -Verifiable
+            $script:healthCallCount = 0
+            Mock Test-ServiceHealthy {
+                $script:healthCallCount++
+                return $script:healthCallCount -ge 2
+            }
+
+            $thrown = $false
+            try {
+                Invoke-DockerServiceDeploy -Service "central-server" -TargetHost "192.168.103.154" `
+                    -SshUser "ifa" -SshKeyPath "C:\key" -ImageTarLocalPath "C:\image.tar" `
+                    -NewImageRef "ifascada/central-server:1.0.3" -HealthUrl "http://192.168.103.154:8088/health/live"
+            } catch {
+                $thrown = $true
+            }
+            $thrown | Should Be $true
+
+            Assert-MockCalled Test-ServiceHealthy -Times 2 -Exactly
+            Assert-MockCalled Invoke-RemoteCommand -ParameterFilter { $Command -like "*1.0.2*" } -Times 1
+        }
+    }
+
+    It "throws when both the deploy and the rollback fail health checks" {
+        Mock Test-ServiceHealthy { $false }
+
+        $thrown = $false
+        try {
+            Invoke-DockerServiceDeploy -Service "central-server" -TargetHost "192.168.103.154" `
+                -SshUser "ifa" -SshKeyPath "C:\key" -ImageTarLocalPath "C:\image.tar" `
+                -NewImageRef "ifascada/central-server:1.0.3" -HealthUrl "http://192.168.103.154:8088/health/live"
+        } catch {
+            $thrown = $true
+        }
+        $thrown | Should Be $true
+    }
+}

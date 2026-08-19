@@ -95,3 +95,67 @@ function Copy-ToRemote {
         throw "File copy failed: $LocalPath -> ${TargetHost}:${RemotePath}"
     }
 }
+
+# Orchestrates a full deploy of Update Protocol v1: copy the image tar to the remote
+# host, load it, swap the .env-referenced tag, restart via docker compose, and poll
+# health. On a failed health check it automatically rolls back to the previous image
+# tag. NOTE: this function throws in BOTH failure paths -- even when the rollback
+# itself succeeds -- because a successful automatic rollback still means the *new*
+# version never shipped, and the caller (Task 12/13's CI workflow step) must fail the
+# job loudly in both cases so a human notices. Only a healthy deploy of NewImageRef
+# returns normally.
+function Invoke-DockerServiceDeploy {
+    param(
+        [Parameter(Mandatory)][ValidateSet("central-server", "web-ui")][string]$Service,
+        [Parameter(Mandatory)][string]$TargetHost,
+        [Parameter(Mandatory)][string]$SshUser,
+        [Parameter(Mandatory)][string]$SshKeyPath,
+        [Parameter(Mandatory)][string]$ImageTarLocalPath,
+        [Parameter(Mandatory)][string]$NewImageRef,
+        [Parameter(Mandatory)][string]$HealthUrl,
+        [string]$RemoteComposeDir = "C:/ifascada-central",
+        [int]$HealthMaxAttempts = 30,
+        [int]$HealthPollIntervalSeconds = 2
+    )
+
+    $envVarName = if ($Service -eq "central-server") { "CENTRAL_IMAGE" } else { "WEB_UI_IMAGE" }
+    $remoteTarPath = "$RemoteComposeDir/deploy-$Service.tar"
+    $remoteEnvPath = "$RemoteComposeDir/.env"
+
+    Write-Host "[$Service] Copying image tar to $TargetHost..."
+    Copy-ToRemote -TargetHost $TargetHost -SshUser $SshUser -SshKeyPath $SshKeyPath -LocalPath $ImageTarLocalPath -RemotePath $remoteTarPath
+
+    Write-Host "[$Service] Loading image on remote host..."
+    Invoke-RemoteCommand -TargetHost $TargetHost -SshUser $SshUser -SshKeyPath $SshKeyPath -Command "docker load -i $remoteTarPath" | Out-Null
+
+    $currentEnvContent = (Invoke-RemoteCommand -TargetHost $TargetHost -SshUser $SshUser -SshKeyPath $SshKeyPath -Command "type `"$remoteEnvPath`"") -join "`r`n"
+    $previousImageRef = Get-CurrentImageTag -EnvContent $currentEnvContent -VarName $envVarName
+    Write-Host "[$Service] Current image: $previousImageRef -> deploying: $NewImageRef"
+
+    function Set-RemoteImageRefAndRestart([string]$ImageRef) {
+        $newEnvContent = Set-ImageTag -EnvContent $currentEnvContent -VarName $envVarName -NewValue $ImageRef
+        $escaped = $newEnvContent -replace '"', '""'
+        Invoke-RemoteCommand -TargetHost $TargetHost -SshUser $SshUser -SshKeyPath $SshKeyPath `
+            -Command "powershell -NoProfile -Command `"Set-Content -Path '$remoteEnvPath' -Value \`"$escaped\`" -NoNewline`"" | Out-Null
+        Invoke-RemoteCommand -TargetHost $TargetHost -SshUser $SshUser -SshKeyPath $SshKeyPath `
+            -Command "cd $RemoteComposeDir && docker compose up -d $Service" | Out-Null
+    }
+
+    Set-RemoteImageRefAndRestart -ImageRef $NewImageRef
+
+    Write-Host "[$Service] Waiting for health check at $HealthUrl..."
+    $healthy = Test-ServiceHealthy -Url $HealthUrl -MaxAttempts $HealthMaxAttempts -PollIntervalSeconds $HealthPollIntervalSeconds
+
+    if ($healthy) {
+        Write-Host "[$Service] Deploy succeeded: $NewImageRef is healthy."
+        return
+    }
+
+    Write-Host "[$Service] Health check FAILED. Rolling back to $previousImageRef..."
+    Set-RemoteImageRefAndRestart -ImageRef $previousImageRef
+    $rolledBack = Test-ServiceHealthy -Url $HealthUrl -MaxAttempts $HealthMaxAttempts -PollIntervalSeconds $HealthPollIntervalSeconds
+    if (-not $rolledBack) {
+        throw "[$Service] Rollback to $previousImageRef ALSO failed health check. Manual intervention required."
+    }
+    throw "[$Service] Deploy of $NewImageRef failed health check; automatically rolled back to $previousImageRef."
+}
