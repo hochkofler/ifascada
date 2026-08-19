@@ -1,3 +1,13 @@
+# Internal wrapper functions for external commands (mockable for testing)
+function Invoke-Ssh {
+    param([Parameter(ValueFromRemainingArguments=$true)]$Args)
+    & ssh @Args
+}
+
+function Invoke-Scp {
+    param([Parameter(ValueFromRemainingArguments=$true)]$Args)
+    & scp @Args
+}
 
 function Get-CurrentImageTag {
     param(
@@ -54,4 +64,34 @@ function Test-ServiceHealthy {
         }
     }
     return $false
+}
+
+function Invoke-RemoteCommand {
+    param(
+        [Parameter(Mandatory)][string]$TargetHost,
+        [Parameter(Mandatory)][string]$SshUser,
+        [Parameter(Mandatory)][string]$SshKeyPath,
+        [Parameter(Mandatory)][string]$Command
+    )
+    $sshArgs = @("-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-i", $SshKeyPath, "$SshUser@$TargetHost", $Command)
+    $output = Invoke-Ssh @sshArgs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Remote command failed (exit $LASTEXITCODE): $Command`n$output"
+    }
+    return $output
+}
+
+function Copy-ToRemote {
+    param(
+        [Parameter(Mandatory)][string]$TargetHost,
+        [Parameter(Mandatory)][string]$SshUser,
+        [Parameter(Mandatory)][string]$SshKeyPath,
+        [Parameter(Mandatory)][string]$LocalPath,
+        [Parameter(Mandatory)][string]$RemotePath
+    )
+    $scpArgs = @("-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-i", $SshKeyPath, $LocalPath, "${SshUser}@${TargetHost}:${RemotePath}")
+    Invoke-Scp @scpArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "File copy failed: $LocalPath -> ${TargetHost}:${RemotePath}"
+    }
 }

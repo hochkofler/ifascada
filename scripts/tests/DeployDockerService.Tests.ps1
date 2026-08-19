@@ -73,3 +73,40 @@ Describe "Test-ServiceHealthy" {
         $script:callCount3 | Should Be 3
     }
 }
+
+Describe "Invoke-RemoteCommand" {
+    It "returns captured output on success" {
+        Mock Invoke-Ssh { "remote output line" ; $global:LASTEXITCODE = 0 }
+        $result = Invoke-RemoteCommand -TargetHost "192.168.103.154" -SshUser "ifa" -SshKeyPath "C:\key" -Command "echo hi"
+        $result | Should Be "remote output line"
+    }
+
+    It "throws when the remote command fails" {
+        Mock Invoke-Ssh { "some error"; $global:LASTEXITCODE = 1 }
+        $thrown = $false
+        try {
+            Invoke-RemoteCommand -TargetHost "192.168.103.154" -SshUser "ifa" -SshKeyPath "C:\key" -Command "false"
+        } catch {
+            $thrown = $true
+        }
+        $thrown | Should Be $true
+    }
+}
+
+Describe "Copy-ToRemote" {
+    It "does not throw on a successful copy" {
+        Mock Invoke-Scp { $global:LASTEXITCODE = 0 }
+        Copy-ToRemote -TargetHost "192.168.103.154" -SshUser "ifa" -SshKeyPath "C:\key" -LocalPath "C:\local.tar" -RemotePath "C:/remote.tar"
+    }
+
+    It "throws when the copy fails" {
+        Mock Invoke-Scp { $global:LASTEXITCODE = 1 }
+        $thrown = $false
+        try {
+            Copy-ToRemote -TargetHost "192.168.103.154" -SshUser "ifa" -SshKeyPath "C:\key" -LocalPath "C:\local.tar" -RemotePath "C:/remote.tar"
+        } catch {
+            $thrown = $true
+        }
+        $thrown | Should Be $true
+    }
+}
