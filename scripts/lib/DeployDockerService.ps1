@@ -33,3 +33,25 @@ function Set-ImageTag {
     }
     return ($result -join "`r`n")
 }
+
+function Test-ServiceHealthy {
+    param(
+        [Parameter(Mandatory)][string]$Url,
+        [int]$MaxAttempts = 30,
+        [int]$PollIntervalSeconds = 2
+    )
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5
+            if ($response.StatusCode -eq 200) {
+                return $true
+            }
+        } catch {
+            # not up yet, keep polling
+        }
+        if ($attempt -lt $MaxAttempts) {
+            Start-Sleep -Seconds $PollIntervalSeconds
+        }
+    }
+    return $false
+}

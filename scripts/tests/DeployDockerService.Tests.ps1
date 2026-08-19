@@ -40,3 +40,36 @@ Describe "Set-ImageTag" {
         $thrown | Should Be $true
     }
 }
+
+Describe "Test-ServiceHealthy" {
+    BeforeEach {
+        Mock Start-Sleep {}
+    }
+
+    It "returns true immediately when the first check succeeds" {
+        Mock Invoke-WebRequest { [pscustomobject]@{ StatusCode = 200 } }
+        Test-ServiceHealthy -Url "http://example.invalid/health" -MaxAttempts 5 -PollIntervalSeconds 1 | Should Be $true
+        Assert-MockCalled Invoke-WebRequest -Times 1 -Exactly
+    }
+
+    It "retries after a failed attempt and succeeds on the next one" {
+        $script:callCount = 0
+        Mock Invoke-WebRequest {
+            $script:callCount++
+            if ($script:callCount -lt 3) { throw "connection refused" }
+            [pscustomobject]@{ StatusCode = 200 }
+        }
+        Test-ServiceHealthy -Url "http://example.invalid/health" -MaxAttempts 5 -PollIntervalSeconds 1 | Should Be $true
+        $script:callCount | Should Be 3
+    }
+
+    It "returns false after exhausting all attempts" {
+        $script:callCount3 = 0
+        Mock Invoke-WebRequest {
+            $script:callCount3++
+            throw "connection refused"
+        }
+        Test-ServiceHealthy -Url "http://example.invalid/health" -MaxAttempts 3 -PollIntervalSeconds 1 | Should Be $false
+        $script:callCount3 | Should Be 3
+    }
+}
