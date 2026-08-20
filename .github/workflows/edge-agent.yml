@@ -10,6 +10,8 @@ jobs:
     runs-on: [self-hosted, windows, ifascada]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract version from tag
         id: version
@@ -18,6 +20,23 @@ jobs:
           $tag = "${{ github.ref_name }}"
           $version = $tag -replace '^edge-v', ''
           "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Verify tag actually touches edge-agent
+        shell: pwsh
+        run: |
+          $prevTag = git describe --tags --abbrev=0 --match "edge-v*" "${{ github.ref_name }}^" 2>$null
+          if (-not $prevTag) {
+            Write-Output "No previous edge-v* tag found -- treating this as the first release, nothing to compare against."
+            exit 0
+          }
+          $changed = git diff --name-only "$prevTag" "${{ github.ref_name }}"
+          $relevant = $changed | Where-Object { $_ -match '^(crates/(domain|application|infrastructure|edge-agent)/|Cargo\.(toml|lock)$|deploy/edge-1\.0\.0-runtime/)' }
+          if (-not $relevant) {
+            Write-Error "Tag ${{ github.ref_name }} does not change anything relevant to edge-agent since $prevTag -- refusing to build/release a no-op release."
+            exit 1
+          }
+          Write-Output "Relevant changes since $prevTag :"
+          $relevant | ForEach-Object { Write-Output " - $_" }
 
       - name: Run tests
         shell: pwsh

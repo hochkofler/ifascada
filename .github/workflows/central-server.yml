@@ -12,6 +12,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract version from tag
         id: version
@@ -20,6 +22,23 @@ jobs:
           $tag = "${{ github.ref_name }}"
           $version = $tag -replace '^central-v', ''
           "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Verify tag actually touches central-server
+        shell: pwsh
+        run: |
+          $prevTag = git describe --tags --abbrev=0 --match "central-v*" "${{ github.ref_name }}^" 2>$null
+          if (-not $prevTag) {
+            Write-Output "No previous central-v* tag found -- treating this as the first release, nothing to compare against."
+            exit 0
+          }
+          $changed = git diff --name-only "$prevTag" "${{ github.ref_name }}"
+          $relevant = $changed | Where-Object { $_ -match '^(central-server/|crates/(domain|application|infrastructure|central-server)/|Cargo\.(toml|lock)$)' }
+          if (-not $relevant) {
+            Write-Error "Tag ${{ github.ref_name }} does not change anything relevant to central-server since $prevTag -- refusing to build/deploy a no-op release."
+            exit 1
+          }
+          Write-Output "Relevant changes since $prevTag :"
+          $relevant | ForEach-Object { Write-Output " - $_" }
 
       - name: Run tests
         shell: pwsh
