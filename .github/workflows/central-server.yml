@@ -127,11 +127,14 @@ jobs:
       - name: Deploy to central host
         shell: pwsh
         run: |
+          # Same root cause as the earlier cargo/gh fixes: $env:USERPROFILE for the NETWORK
+          # SERVICE account running this job is C:\WINDOWS\ServiceProfiles\NetworkService, not
+          # the interactive user's profile where the Task 9 deploy key actually lives.
           ./scripts/deploy-docker-service.ps1 `
             -Service "central-server" `
             -TargetHost "192.168.103.154" `
             -SshUser "ifa" `
-            -SshKeyPath "$env:USERPROFILE\.ssh\ifascada_ci_deploy" `
+            -SshKeyPath "C:\Users\MATHIASHA\.ssh\ifascada_ci_deploy" `
             -ImageTarLocalPath "central-server-${{ needs.build.outputs.version }}.tar" `
             -NewImageRef "ifascada/central-server:${{ needs.build.outputs.version }}" `
             -HealthUrl "http://192.168.103.154:8088/health/live"
