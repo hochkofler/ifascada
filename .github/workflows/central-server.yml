@@ -8,6 +8,11 @@ on:
 jobs:
   build:
     runs-on: [self-hosted, windows, ifascada]
+    # The auto-generated GITHUB_TOKEN defaults to read-only. Creating a release needs write
+    # access to contents; without this, softprops/action-gh-release fails with a 403
+    # "Resource not accessible by integration".
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
     env:
