@@ -86,7 +86,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download ${{ github.ref_name }} --pattern "*.tar" --dir .
+          # --clobber: with checkout's clean=false, a same-named .tar from a previous run of
+          # this same tag can still be sitting in the shared _work directory; always take the
+          # freshly-published one instead of failing on "already exists".
+          gh release download ${{ github.ref_name }} --pattern "*.tar" --dir . --clobber
 
       - name: Deploy to central host
         shell: pwsh
