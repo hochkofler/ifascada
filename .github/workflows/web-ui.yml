@@ -55,7 +55,13 @@ jobs:
       - name: Build Docker image
         shell: pwsh
         run: |
-          docker build -f web-ui/Dockerfile -t ifascada/web-ui:${{ steps.version.outputs.version }} .
+          # CENTRAL_API_UPSTREAM must be a build arg, not just a runtime env var: Next.js bakes
+          # next.config.mjs's rewrites() into .next/routes-manifest.json at `next build` time.
+          # This has to match the container_name central-server is reachable at on the
+          # production compose network (docker-compose.yml / docker-compose.scada.yml).
+          docker build -f web-ui/Dockerfile `
+            --build-arg CENTRAL_API_UPSTREAM=http://ifascada-central-server:8088 `
+            -t ifascada/web-ui:${{ steps.version.outputs.version }} .
 
       - name: Save image to tar
         shell: pwsh
