@@ -23,20 +23,12 @@ jobs:
           # user's profile where rustup actually installed cargo. A machine-wide PATH change
           # also wouldn't reach it: services.exe only rereads system PATH at boot. So point at
           # the real cargo location explicitly instead of relying on runner host state.
+          #
+          # This alone isn't enough: NETWORK SERVICE also needs NTFS read+execute rights on
+          # C:\Users\MATHIASHA\.cargo and \.rustup (granted once, out-of-band, via
+          # `icacls ... /grant "*S-1-5-20:(OI)(CI)RX" /T` -- not something a workflow file
+          # can express, since it's host state, not repo state).
           "C:\Users\MATHIASHA\.cargo\bin" >> $env:GITHUB_PATH
-
-      - name: DEBUG PATH state
-        shell: pwsh
-        run: |
-          Write-Output "GITHUB_PATH file location: $env:GITHUB_PATH"
-          Write-Output "--- contents of that file ---"
-          Get-Content -Raw $env:GITHUB_PATH
-          Write-Output "--- current process PATH ---"
-          $env:PATH -split ';'
-          Write-Output "--- does cargo.exe exist at expected path? ---"
-          Test-Path "C:\Users\MATHIASHA\.cargo\bin\cargo.exe"
-          Write-Output "--- whoami ---"
-          whoami
 
       - name: Extract version from tag
         id: version
