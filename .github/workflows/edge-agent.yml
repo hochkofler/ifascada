@@ -13,6 +13,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Ensure cargo is on PATH
+        shell: pwsh
+        run: |
+          # The self-hosted runner service runs as NT AUTHORITY\NETWORK SERVICE, whose own
+          # %USERPROFILE% is C:\Windows\ServiceProfiles\NetworkService -- not the interactive
+          # user's profile where rustup actually installed cargo. A machine-wide PATH change
+          # also wouldn't reach it: services.exe only rereads system PATH at boot. So point at
+          # the real cargo location explicitly instead of relying on runner host state.
+          "C:\Users\MATHIASHA\.cargo\bin" >> $env:GITHUB_PATH
+
       - name: Extract version from tag
         id: version
         shell: pwsh
