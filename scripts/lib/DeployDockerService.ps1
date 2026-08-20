@@ -143,9 +143,19 @@ function Invoke-DockerServiceDeploy {
 
     function Set-RemoteImageRefAndRestart([string]$ImageRef) {
         $newEnvContent = Set-ImageTag -EnvContent $currentEnvContent -VarName $envVarName -NewValue $ImageRef
-        $escaped = $newEnvContent -replace '"', '""'
-        Invoke-RemoteCommand -TargetHost $TargetHost -SshUser $SshUser -SshKeyPath $SshKeyPath `
-            -Command "powershell -NoProfile -Command `"Set-Content -Path '$remoteEnvPath' -Value \`"$escaped\`" -NoNewline`"" | Out-Null
+        # Passing the whole .env as a single remote command's -Value argument doesn't survive
+        # the trip: the real file has ~30 lines, a literal '#' (topic filter wildcard), and the
+        # ssh/cmd.exe path collapsed every embedded newline into a space, corrupting the content
+        # and then failing to even parse as a command ("Falta la cadena en el terminador").
+        # Write it to a local temp file and scp it over instead -- the same transport we already
+        # use (and already verified working) for the image tar, with no shell quoting involved.
+        $localTempEnvPath = Join-Path ([System.IO.Path]::GetTempPath()) "$Service.$([guid]::NewGuid()).env"
+        [System.IO.File]::WriteAllText($localTempEnvPath, $newEnvContent)
+        try {
+            Copy-ToRemote -TargetHost $TargetHost -SshUser $SshUser -SshKeyPath $SshKeyPath -LocalPath $localTempEnvPath -RemotePath $remoteEnvPath
+        } finally {
+            Remove-Item -Path $localTempEnvPath -Force -ErrorAction SilentlyContinue
+        }
         Invoke-RemoteCommand -TargetHost $TargetHost -SshUser $SshUser -SshKeyPath $SshKeyPath `
             -Command "cd $RemoteComposeDir && docker compose up -d $Service" | Out-Null
     }

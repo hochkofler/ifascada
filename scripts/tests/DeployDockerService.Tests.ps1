@@ -113,7 +113,15 @@ Describe "Copy-ToRemote" {
 
 Describe "Invoke-DockerServiceDeploy" {
     BeforeEach {
-        Mock Copy-ToRemote {}
+        $script:capturedEnvUploads = @()
+        Mock Copy-ToRemote {
+            param($TargetHost, $SshUser, $SshKeyPath, $LocalPath, $RemotePath)
+            if ($RemotePath -like "*.env") {
+                # Capture now: the real function deletes the local temp file right after
+                # this call returns, so it won't exist by the time the It block asserts.
+                $script:capturedEnvUploads += (Get-Content -Raw $LocalPath)
+            }
+        }
         Mock Invoke-RemoteCommand {
             param($TargetHost, $SshUser, $SshKeyPath, $Command)
             if ($Command -like "type*") { return "CENTRAL_IMAGE=ifascada/central-server:1.0.2" }
@@ -128,9 +136,11 @@ Describe "Invoke-DockerServiceDeploy" {
             -SshUser "ifa" -SshKeyPath "C:\key" -ImageTarLocalPath "C:\image.tar" `
             -NewImageRef "ifascada/central-server:1.0.3" -HealthUrl "http://192.168.103.154:8088/health/live"
 
-        Assert-MockCalled Copy-ToRemote -Times 1 -Exactly
+        # Once for the image tar, once for the updated .env.
+        Assert-MockCalled Copy-ToRemote -Times 2 -Exactly
         Assert-MockCalled Test-ServiceHealthy -Times 1 -Exactly
-        Assert-MockCalled Invoke-RemoteCommand -ParameterFilter { $Command -like "*1.0.3*" } -Times 1
+        $script:capturedEnvUploads.Count | Should Be 1
+        $script:capturedEnvUploads[0] | Should Match "CENTRAL_IMAGE=ifascada/central-server:1.0.3"
     }
 
     # Wrapped in its own Context: Pester 3.4.0 accumulates a mock's call history across
@@ -158,7 +168,9 @@ Describe "Invoke-DockerServiceDeploy" {
             $thrown | Should Be $true
 
             Assert-MockCalled Test-ServiceHealthy -Times 2 -Exactly
-            Assert-MockCalled Invoke-RemoteCommand -ParameterFilter { $Command -like "*1.0.2*" } -Times 1
+            # [0]: the failed 1.0.3 deploy attempt's .env upload; [1]: the rollback's.
+            $script:capturedEnvUploads.Count | Should Be 2
+            $script:capturedEnvUploads[1] | Should Match "CENTRAL_IMAGE=ifascada/central-server:1.0.2"
         }
     }
 
