@@ -1,0 +1,88 @@
+name: web-ui
+
+on:
+  push:
+    tags:
+      - 'webui-v*'
+
+jobs:
+  build:
+    runs-on: [self-hosted, windows, ifascada]
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^webui-v', ''
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Verify tag actually touches web-ui
+        shell: pwsh
+        run: |
+          $prevTag = git describe --tags --abbrev=0 --match "webui-v*" "${{ github.ref_name }}^" 2>$null
+          if (-not $prevTag) {
+            Write-Output "No previous webui-v* tag found -- treating this as the first release, nothing to compare against."
+            exit 0
+          }
+          $changed = git diff --name-only "$prevTag" "${{ github.ref_name }}"
+          $relevant = $changed | Where-Object { $_ -match '^web-ui/' }
+          if (-not $relevant) {
+            Write-Error "Tag ${{ github.ref_name }} does not change anything relevant to web-ui since $prevTag -- refusing to build/deploy a no-op release."
+            exit 1
+          }
+          Write-Output "Relevant changes since $prevTag :"
+          $relevant | ForEach-Object { Write-Output " - $_" }
+
+      - name: Install dependencies and build
+        shell: pwsh
+        working-directory: web-ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build Docker image
+        shell: pwsh
+        run: |
+          docker build -f web-ui/Dockerfile -t ifascada/web-ui:${{ steps.version.outputs.version }} .
+
+      - name: Save image to tar
+        shell: pwsh
+        run: |
+          docker save ifascada/web-ui:${{ steps.version.outputs.version }} -o web-ui-${{ steps.version.outputs.version }}.tar
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: web-ui-${{ steps.version.outputs.version }}.tar
+
+  deploy:
+    needs: build
+    runs-on: [self-hosted, windows, ifascada]
+    environment: production
+    steps:
+      - name: Download release artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download ${{ github.ref_name }} --pattern "*.tar" --dir .
+
+      - name: Deploy to central host
+        shell: pwsh
+        run: |
+          ./scripts/deploy-docker-service.ps1 `
+            -Service "web-ui" `
+            -TargetHost "192.168.103.154" `
+            -SshUser "ifa" `
+            -SshKeyPath "$env:USERPROFILE\.ssh\ifascada_ci_deploy" `
+            -ImageTarLocalPath "web-ui-${{ needs.build.outputs.version }}.tar" `
+            -NewImageRef "ifascada/web-ui:${{ needs.build.outputs.version }}" `
+            -HealthUrl "http://192.168.103.154:3001/api/health"
