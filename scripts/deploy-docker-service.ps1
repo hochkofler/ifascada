@@ -7,7 +7,7 @@ param(
     [Parameter(Mandatory)][string]$ImageTarLocalPath,
     [Parameter(Mandatory)][string]$NewImageRef,
     [Parameter(Mandatory)][string]$HealthUrl,
-    [string]$RemoteComposeDir = "C:/ifascada-central",
+    [string]$RemoteComposeDir = "C:\ifascada-central",
     [int]$HealthMaxAttempts = 30,
     [int]$HealthPollIntervalSeconds = 2
 )

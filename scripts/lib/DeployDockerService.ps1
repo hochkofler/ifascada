@@ -113,14 +113,18 @@ function Invoke-DockerServiceDeploy {
         [Parameter(Mandatory)][string]$ImageTarLocalPath,
         [Parameter(Mandatory)][string]$NewImageRef,
         [Parameter(Mandatory)][string]$HealthUrl,
-        [string]$RemoteComposeDir = "C:/ifascada-central",
+        [string]$RemoteComposeDir = "C:\ifascada-central",
         [int]$HealthMaxAttempts = 30,
         [int]$HealthPollIntervalSeconds = 2
     )
 
     $envVarName = if ($Service -eq "central-server") { "CENTRAL_IMAGE" } else { "WEB_UI_IMAGE" }
-    $remoteTarPath = "$RemoteComposeDir/deploy-$Service.tar"
-    $remoteEnvPath = "$RemoteComposeDir/.env"
+    # Backslashes matter here, not just style: the remote command shell for a non-interactive
+    # `ssh host "..."` invocation on this Windows host is cmd.exe, and cmd's internal `type`
+    # command fails to resolve a forward-slash path ("system cannot find the file specified")
+    # even though docker.exe and PowerShell -Command both accept either separator fine.
+    $remoteTarPath = "$RemoteComposeDir\deploy-$Service.tar"
+    $remoteEnvPath = "$RemoteComposeDir\.env"
 
     Write-Host "[$Service] Copying image tar to $TargetHost..."
     Copy-ToRemote -TargetHost $TargetHost -SshUser $SshUser -SshKeyPath $SshKeyPath -LocalPath $ImageTarLocalPath -RemotePath $remoteTarPath
