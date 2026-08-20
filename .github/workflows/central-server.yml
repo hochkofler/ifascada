@@ -127,14 +127,19 @@ jobs:
       - name: Deploy to central host
         shell: pwsh
         run: |
-          # Same root cause as the earlier cargo/gh fixes: $env:USERPROFILE for the NETWORK
-          # SERVICE account running this job is C:\WINDOWS\ServiceProfiles\NetworkService, not
-          # the interactive user's profile where the Task 9 deploy key actually lives.
+          # The key lives under C:\ProgramData\ifascada-ci\.ssh, not a user profile: OpenSSH's
+          # Windows client rejects a private key file unless every ACE on it belongs to the
+          # account actually running the process (NETWORK SERVICE here), SYSTEM, or
+          # Administrators. A file under a personal user's profile keeps that user's own ACE
+          # too, which OpenSSH treats as "unprotected" no matter how that ACE is trimmed --
+          # something (GPO or an endpoint agent) kept re-adding it on this machine. A
+          # dedicated machine-wide location, ACL'd once and owned by Administrators, sidesteps
+          # that entirely.
           ./scripts/deploy-docker-service.ps1 `
             -Service "central-server" `
             -TargetHost "192.168.103.154" `
             -SshUser "ifa" `
-            -SshKeyPath "C:\Users\MATHIASHA\.ssh\ifascada_ci_deploy" `
+            -SshKeyPath "C:\ProgramData\ifascada-ci\.ssh\ifascada_ci_deploy" `
             -ImageTarLocalPath "central-server-${{ needs.build.outputs.version }}.tar" `
             -NewImageRef "ifascada/central-server:${{ needs.build.outputs.version }}" `
             -HealthUrl "http://192.168.103.154:8088/health/live"
