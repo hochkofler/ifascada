@@ -7,6 +7,7 @@ import { useOperationalContextStore } from "@/store/context-store";
 import { useHmiStore } from "@/store/hmi-store";
 import { TrendAccumChart } from "@/components/trend-accum-chart";
 import { formatProcessValue, parseCompound } from "@/lib/hmi-value";
+import { useAutoSelectFirstTag } from "@/lib/use-auto-select-tag";
 
 function toNumeric(v: unknown): number {
   if (typeof v === "number") return v;
@@ -31,6 +32,7 @@ export default function TrendsAccumPage() {
 
   const filter = { site, line: line || undefined, area: area || undefined, cell: cell || undefined, edge: edge || undefined };
   const tags = useQuery({ queryKey: ["accum-tags", filter], queryFn: () => fetchTagsCurrent(500, filter) });
+  useAutoSelectFirstTag(tags.data, selectedTag, setSelectedTag);
   const history = useQuery({
     queryKey: ["accum-history", selectedTag, limit],
     queryFn: () => fetchTagHistory(selectedTag, limit),

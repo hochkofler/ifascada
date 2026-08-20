@@ -6,12 +6,14 @@ import { useHmiStore } from "@/store/hmi-store";
 import { TrendChart } from "@/components/trend-chart";
 import { useOperationalContextStore } from "@/store/context-store";
 import { formatProcessValue } from "@/lib/hmi-value";
+import { useAutoSelectFirstTag } from "@/lib/use-auto-select-tag";
 
 export default function TrendsPage() {
   const { selectedTag, setSelectedTag } = useHmiStore();
   const { site, line, area, cell, edge } = useOperationalContextStore();
   const filter = { site, line: line || undefined, area: area || undefined, cell: cell || undefined, edge: edge || undefined };
   const tags = useQuery({ queryKey: ["trend-tags", filter], queryFn: () => fetchTagsCurrent(200, filter) });
+  useAutoSelectFirstTag(tags.data, selectedTag, setSelectedTag);
   const history = useQuery({
     queryKey: ["tag-history", selectedTag],
     queryFn: () => fetchTagHistory(selectedTag, 300),

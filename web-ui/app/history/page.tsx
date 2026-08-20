@@ -6,6 +6,7 @@ import { fetchTagHistory, fetchTagsCurrent, postEdgeAction, type TagHistory } fr
 import { useOperationalContextStore } from "@/store/context-store";
 import { useHmiStore } from "@/store/hmi-store";
 import { formatProcessValue } from "@/lib/hmi-value";
+import { useAutoSelectFirstTag } from "@/lib/use-auto-select-tag";
 
 type DeviceCommandAction = {
   action_type: string;
@@ -81,6 +82,7 @@ export default function HistoryPage() {
 
   const filter = { site, line: line || undefined, area: area || undefined, cell: cell || undefined, edge: edge || undefined };
   const tags = useQuery({ queryKey: ["history-tags", filter], queryFn: () => fetchTagsCurrent(500, filter) });
+  useAutoSelectFirstTag(tags.data, selectedTag, setSelectedTag);
   const history = useQuery({
     queryKey: ["history-events", selectedTag, HISTORY_FETCH_LIMIT],
     queryFn: () => fetchTagHistory(selectedTag, HISTORY_FETCH_LIMIT, 0),
