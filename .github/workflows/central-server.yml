@@ -1,0 +1,68 @@
+name: central-server
+
+on:
+  push:
+    tags:
+      - 'central-v*'
+
+jobs:
+  build:
+    runs-on: [self-hosted, windows, ifascada]
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^central-v', ''
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Run tests
+        shell: pwsh
+        run: |
+          cargo check --package central-server
+          cargo test --package central-server
+
+      - name: Build Docker image
+        shell: pwsh
+        run: |
+          docker build -f central-server/Dockerfile -t ifascada/central-server:${{ steps.version.outputs.version }} .
+
+      - name: Save image to tar
+        shell: pwsh
+        run: |
+          docker save ifascada/central-server:${{ steps.version.outputs.version }} -o central-server-${{ steps.version.outputs.version }}.tar
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: central-server-${{ steps.version.outputs.version }}.tar
+
+  deploy:
+    needs: build
+    runs-on: [self-hosted, windows, ifascada]
+    environment: production
+    steps:
+      - name: Download release artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download ${{ github.ref_name }} --pattern "*.tar" --dir .
+
+      - name: Deploy to central host
+        shell: pwsh
+        run: |
+          ./scripts/deploy-docker-service.ps1 `
+            -Service "central-server" `
+            -TargetHost "192.168.103.154" `
+            -SshUser "ifa" `
+            -SshKeyPath "$env:USERPROFILE\.ssh\ifascada_ci_deploy" `
+            -ImageTarLocalPath "central-server-${{ needs.build.outputs.version }}.tar" `
+            -NewImageRef "ifascada/central-server:${{ needs.build.outputs.version }}" `
+            -HealthUrl "http://192.168.103.154:8088/health/live"
