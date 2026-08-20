@@ -1,0 +1,12 @@
+# Default: let git decide text vs binary, normalize line endings in the repo, but don't force
+# a specific checkout style (Windows-only scripts like .ps1 want CRLF locally and that's fine).
+* text=auto
+
+# Scripts executed inside Linux containers (via mounted volumes or COPY in a Dockerfile) must
+# keep LF endings regardless of the checkout platform -- a CRLF shebang line breaks /bin/sh
+# with cryptic errors like "illegal option -" (the \r gets parsed as part of the option).
+# Found via docker/db-seed.sh failing exactly this way on a Windows checkout. These rules must
+# stay below the "* text=auto" line above: git attribute matching is last-rule-wins per
+# attribute, so a more specific rule listed earlier would get overridden by the general one.
+*.sh text eol=lf
+*.sql text eol=lf

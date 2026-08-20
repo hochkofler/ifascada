@@ -39,4 +39,5 @@ web-ui/node_modules/
 web-ui/.next/
 web-ui/out/
 web-ui/dist/
+web-ui/tsconfig.tsbuildinfo
 web-ui/build/

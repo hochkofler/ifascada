@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchTagHistory, fetchTagsCurrent, postEdgeAction } from "@/lib/api";
+import { fetchTagHistory, fetchTagsCurrent, postEdgeAction, type TagHistory } from "@/lib/api";
 import { useOperationalContextStore } from "@/store/context-store";
 import { useHmiStore } from "@/store/hmi-store";
 import { formatProcessValue } from "@/lib/hmi-value";
@@ -53,26 +53,63 @@ function findPrintPersistAction(meta: Record<string, unknown> | undefined): Devi
   return null;
 }
 
+// Upper bound on how much history we pull per tag selection. Date filtering and pagination both
+// happen client-side over this set (the API has no date-range parameter), so this is effectively
+// "how far back a date filter can reach" -- generous enough for interactive use without pulling
+// unbounded history for a tag that's been reporting for months.
+const HISTORY_FETCH_LIMIT = 2000;
+
+// Stable row identity independent of which page it's currently displayed on -- needed so a
+// selection made on one page survives navigating to another (selection is keyed by this, not by
+// position within the currently-rendered page).
+function rowKey(r: { ts: string; tag_code: string }, indexInFullSet: number) {
+  return `${indexInFullSet}-${r.ts}-${r.tag_code}`;
+}
+
 export default function HistoryPage() {
   const { selectedTag, setSelectedTag } = useHmiStore();
   const { site, line, area, cell, edge } = useOperationalContextStore();
   const [pageSize, setPageSize] = useState(50);
   const [page, setPage] = useState(1);
-  const [selectedRows, setSelectedRows] = useState<Record<string, boolean>>({});
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  // Keyed by rowKey(), not by position-on-page: this is what makes a selection survive both
+  // paging and date-range changes, since the same historical row always maps to the same key.
+  const [selectedRows, setSelectedRows] = useState<Record<string, TagHistory>>({});
   const [printing, setPrinting] = useState(false);
   const [printMsg, setPrintMsg] = useState<string>("");
-  const offset = (page - 1) * pageSize;
 
   const filter = { site, line: line || undefined, area: area || undefined, cell: cell || undefined, edge: edge || undefined };
   const tags = useQuery({ queryKey: ["history-tags", filter], queryFn: () => fetchTagsCurrent(500, filter) });
   const history = useQuery({
-    queryKey: ["history-events", selectedTag, pageSize, page],
-    queryFn: () => fetchTagHistory(selectedTag, pageSize, offset),
+    queryKey: ["history-events", selectedTag, HISTORY_FETCH_LIMIT],
+    queryFn: () => fetchTagHistory(selectedTag, HISTORY_FETCH_LIMIT, 0),
     enabled: Boolean(selectedTag),
   });
 
-  const rows = useMemo(() => history.data ?? [], [history.data]);
-  const hasNext = rows.length === pageSize;
+  const allRows = useMemo(() => history.data ?? [], [history.data]);
+  const fromMs = dateFrom ? new Date(dateFrom).getTime() : null;
+  const toMs = dateTo ? new Date(dateTo).getTime() : null;
+  // Filtered against the full fetched set, then paginated client-side -- a date filter never
+  // hides tags in the "Tag" selector above (that list comes from fetchTagsCurrent, an unrelated
+  // query), only the rows shown here for the already-selected tag.
+  const filteredRows = useMemo(
+    () =>
+      allRows.filter((r) => {
+        const t = new Date(r.ts).getTime();
+        if (fromMs !== null && t < fromMs) return false;
+        if (toMs !== null && t > toMs) return false;
+        return true;
+      }),
+    [allRows, fromMs, toMs]
+  );
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const clampedPage = Math.min(page, pageCount);
+  const rows = useMemo(
+    () => filteredRows.slice((clampedPage - 1) * pageSize, clampedPage * pageSize),
+    [filteredRows, clampedPage, pageSize]
+  );
+  const hasNext = clampedPage < pageCount;
   const selectedTagObj = useMemo(
     () => (tags.data ?? []).find((t) => t.tag_code === selectedTag),
     [tags.data, selectedTag]
@@ -87,14 +124,20 @@ export default function HistoryPage() {
   );
   const selectedItems = useMemo(
     () =>
-      rows
-        .filter((r, idx) => selectedRows[`${r.ts}-${r.tag_code}-${idx}`])
-        .sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()),
-    [rows, selectedRows]
+      Object.values(selectedRows).sort(
+        (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()
+      ),
+    [selectedRows]
   );
+  // Only a tag change invalidates a selection -- rows from a different tag are meaningless to
+  // keep around. Changing the page or the date filter must NOT clear it: that's the whole point
+  // of keying selection by rowKey() instead of by page position.
   useEffect(() => {
     setSelectedRows({});
-  }, [selectedTag, page, pageSize]);
+  }, [selectedTag]);
+  useEffect(() => {
+    setPage(1);
+  }, [selectedTag, dateFrom, dateTo, pageSize]);
 
   async function executePrintSelected() {
     if (!selectedTagObj) {
@@ -198,7 +241,6 @@ export default function HistoryPage() {
               value={selectedTag}
               onChange={(e) => {
                 setSelectedTag(e.target.value);
-                setPage(1);
               }}
             >
               {(tags.data ?? []).map((t) => (
@@ -210,13 +252,13 @@ export default function HistoryPage() {
           </label>
           <label>
             <span>Page Size</span>
-            <select value={String(pageSize)} onChange={(e) => { setPageSize(Number.parseInt(e.target.value, 10)); setPage(1); }}>
+            <select value={String(pageSize)} onChange={(e) => setPageSize(Number.parseInt(e.target.value, 10))}>
               <option value="25">25</option>
               <option value="50">50</option>
               <option value="100">100</option>
             </select>
           </label>
-          <div className="mono muted-inline">rows: {rows.length}</div>
+          <div className="mono muted-inline">rows: {filteredRows.length}</div>
           <div className="mono muted-inline">selected: {selectedItems.length}</div>
           <button
             disabled={printing || !printCommandPayload || selectedItems.length === 0}
@@ -224,6 +266,34 @@ export default function HistoryPage() {
           >
             {printing ? "Printing..." : "Print Selected Weights"}
           </button>
+          {selectedItems.length > 0 ? (
+            <button type="button" onClick={() => setSelectedRows({})}>
+              Clear selection
+            </button>
+          ) : null}
+        </div>
+        <div className="control-row">
+          <label>
+            <span>From</span>
+            <input
+              type="datetime-local"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+            />
+          </label>
+          <label>
+            <span>To</span>
+            <input
+              type="datetime-local"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+            />
+          </label>
+          {dateFrom || dateTo ? (
+            <button type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}>
+              Clear dates
+            </button>
+          ) : null}
         </div>
         {printCommandPayload ? (
           <div className="mono muted-inline">print automation: detected</div>
@@ -249,34 +319,43 @@ export default function HistoryPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, idx) => (
-                <tr key={`${r.ts}-${r.tag_code}-${idx}`}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(selectedRows[`${r.ts}-${r.tag_code}-${idx}`])}
-                      onChange={(e) =>
-                        setSelectedRows((prev) => ({
-                          ...prev,
-                          [`${r.ts}-${r.tag_code}-${idx}`]: e.target.checked,
-                        }))
-                      }
-                    />
-                  </td>
-                  <td className="mono">{new Date(r.ts).toLocaleString()}</td>
-                  <td className="mono">{r.site_code}</td>
-                  <td className="mono">{r.edge_code}</td>
-                  <td className="mono">{r.tag_code}</td>
-                  <td className="mono">{formatProcessValue(r.value)}</td>
-                  <td>{r.quality_status}</td>
-                </tr>
-              ))}
+              {rows.map((r, idxOnPage) => {
+                const indexInFullSet = (clampedPage - 1) * pageSize + idxOnPage;
+                const key = rowKey(r, indexInFullSet);
+                return (
+                  <tr key={key}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(selectedRows[key])}
+                        onChange={(e) =>
+                          setSelectedRows((prev) => {
+                            const next = { ...prev };
+                            if (e.target.checked) {
+                              next[key] = r;
+                            } else {
+                              delete next[key];
+                            }
+                            return next;
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="mono">{new Date(r.ts).toLocaleString()}</td>
+                    <td className="mono">{r.site_code}</td>
+                    <td className="mono">{r.edge_code}</td>
+                    <td className="mono">{r.tag_code}</td>
+                    <td className="mono">{formatProcessValue(r.value)}</td>
+                    <td>{r.quality_status}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
         <div className="pagination-row">
-          <button disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Prev</button>
-          <span className="mono">Page {page}</span>
+          <button disabled={clampedPage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Prev</button>
+          <span className="mono">Page {clampedPage} of {pageCount}</span>
           <button disabled={!hasNext} onClick={() => setPage((p) => p + 1)}>Next</button>
         </div>
       </section>
