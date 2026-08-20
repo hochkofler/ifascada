@@ -133,6 +133,11 @@ function Invoke-DockerServiceDeploy {
     Invoke-RemoteCommand -TargetHost $TargetHost -SshUser $SshUser -SshKeyPath $SshKeyPath -Command "docker load -i $remoteTarPath" | Out-Null
 
     $currentEnvContent = (Invoke-RemoteCommand -TargetHost $TargetHost -SshUser $SshUser -SshKeyPath $SshKeyPath -Command "type `"$remoteEnvPath`"") -join "`r`n"
+    # The real .env on this host was written with a leading UTF-8 BOM (U+FEFF). Left in place,
+    # it lands on the same line as the first variable, so the multiline ^VarName= regex in
+    # Get-CurrentImageTag/Set-ImageTag never matches the first line of the file. Strip it
+    # defensively -- we don't control how this file gets (re)written outside this script.
+    $currentEnvContent = $currentEnvContent.TrimStart([char]0xFEFF)
     $previousImageRef = Get-CurrentImageTag -EnvContent $currentEnvContent -VarName $envVarName
     Write-Host "[$Service] Current image: $previousImageRef -> deploying: $NewImageRef"
 
