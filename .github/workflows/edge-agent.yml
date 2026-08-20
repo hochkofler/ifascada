@@ -15,6 +15,12 @@ jobs:
       # version of cargo to run" unless pointed explicitly at the real install.
       RUSTUP_HOME: C:\Users\MATHIASHA\.rustup
       CARGO_HOME: C:\Users\MATHIASHA\.cargo
+      # This runner is also the interactive daily workstation (rust-analyzer, several VSCode
+      # windows, Docker Desktop, etc. all compete for the same RAM). Building this workspace's
+      # ~300 transitive deps with unlimited parallelism has driven the box into OOM territory
+      # during real runs. Cap cargo's own parallelism to keep peak memory lower, at the cost of
+      # a somewhat slower build.
+      CARGO_BUILD_JOBS: "2"
     steps:
       - uses: actions/checkout@v4
         with:
