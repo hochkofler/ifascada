@@ -1,4 +1,4 @@
-FROM rust:1.85-slim AS builder
+FROM rust:1-bookworm AS builder
 WORKDIR /app
 ENV CARGO_TARGET_DIR=/app/target
 
