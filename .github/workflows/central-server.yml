@@ -27,6 +27,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # This self-hosted runner reuses the same _work directory across runs (unlike
+          # GitHub-hosted runners, which start clean every time). checkout's default clean=true
+          # runs `git clean -ffdx`, which wipes target/ -- including the compiled artifacts for
+          # ~300 dependency crates that never changed. Disabling it lets cargo's own fingerprint
+          # tracking do its job: only recompile what our tagged commit actually touched.
+          clean: false
 
       - name: Ensure cargo is on PATH
         shell: pwsh
