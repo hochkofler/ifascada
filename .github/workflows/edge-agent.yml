@@ -8,6 +8,13 @@ on:
 jobs:
   build:
     runs-on: [self-hosted, windows, ifascada]
+    env:
+      # rustup resolves its config/toolchains via %USERPROFILE%\.rustup by default. The runner
+      # service's own %USERPROFILE% (NT AUTHORITY\NETWORK SERVICE -> ServiceProfiles\NetworkService)
+      # has no rustup install and no default toolchain, so cargo fails with "could not choose a
+      # version of cargo to run" unless pointed explicitly at the real install.
+      RUSTUP_HOME: C:\Users\MATHIASHA\.rustup
+      CARGO_HOME: C:\Users\MATHIASHA\.cargo
     steps:
       - uses: actions/checkout@v4
         with:
