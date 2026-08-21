@@ -7,10 +7,12 @@ export const en = {
     title: "Live status",
     edgesOnline: "Edges online",
     site: "Site",
+    siteError: "Failed to load site list",
     line: "Line",
     area: "Area",
     cell: "Cell",
     edge: "Edge",
+    noData: "No tags for the current context",
   },
   history: {
     title: "Historical query",

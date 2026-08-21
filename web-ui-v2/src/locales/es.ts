@@ -7,10 +7,12 @@ export const es = {
     title: "Estado en vivo",
     edgesOnline: "Edges en línea",
     site: "Sitio",
+    siteError: "No se pudo cargar la lista de sitios",
     line: "Línea",
     area: "Área",
     cell: "Celda",
     edge: "Edge",
+    noData: "Sin tags para el contexto actual",
   },
   history: {
     title: "Consulta histórica",

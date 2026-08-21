@@ -15,3 +15,19 @@ if (!window.matchMedia) {
       dispatchEvent: () => false,
     }) as unknown as MediaQueryList;
 }
+
+// jsdom does not implement pointer capture or scrollIntoView; the vendored Radix-based
+// Select needs both when a test actually opens the dropdown (its trigger/viewport call
+// hasPointerCapture/setPointerCapture/releasePointerCapture and scrollIntoView on select).
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+}
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {};
+}
+if (!Element.prototype.releasePointerCapture) {
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
