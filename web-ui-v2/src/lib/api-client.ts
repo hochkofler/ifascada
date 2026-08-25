@@ -84,6 +84,15 @@ export function fetchTagHistory(tagCode: string, limit = 200, offset = 0): Promi
   return getJson<TagHistory[]>(`/api/tags/${encodeURIComponent(tagCode)}/history?limit=${limit}&offset=${offset}`);
 }
 
+/**
+ * Posts an edge action. The real central-server route is `POST /api/edges/action` (singular,
+ * `edge_code`/`site_code` in the JSON body -- see crates/central-server/src/api.rs's
+ * `edge_action` handler, registered as `.route("/api/edges/action", post(edge_action))`), NOT
+ * `/api/edges/{edge}/actions` (plural, edge in the path). This was verified live against the
+ * real running central-server while building the History page's print flow (Task 12): the
+ * previous body shape 404'd against the real server (confirmed by curl), because it's a
+ * different route than the one central-server actually registers.
+ */
 export function postEdgeAction(
   site: string,
   edge: string,
@@ -91,9 +100,16 @@ export function postEdgeAction(
   payload: Record<string, unknown>,
   meta: { source: string; target: string }
 ): Promise<unknown> {
-  return request(`/api/edges/${encodeURIComponent(edge)}/actions`, {
+  return request(`/api/edges/action`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ site, action_type: actionType, payload, ...meta }),
+    body: JSON.stringify({
+      site_code: site,
+      edge_code: edge,
+      action_type: actionType,
+      payload,
+      source: meta.source,
+      target: meta.target,
+    }),
   });
 }
