@@ -84,6 +84,33 @@ export function fetchTagHistory(tagCode: string, limit = 200, offset = 0): Promi
   return getJson<TagHistory[]>(`/api/tags/${encodeURIComponent(tagCode)}/history?limit=${limit}&offset=${offset}`);
 }
 
+export type OpsEvent = {
+  id: number;
+  ts: string;
+  severity: string;
+  event_type: string;
+  site_code: string;
+  edge_code?: string | null;
+  connection_id?: string | null;
+  device_code?: string | null;
+  tag_code?: string | null;
+  config_hash?: string | null;
+  op_id?: string | null;
+  message: string;
+  payload_json?: Record<string, unknown>;
+};
+
+/**
+ * Real route: `GET /api/ops/events?edge={edge_code}&limit=N` -- see
+ * crates/central-server/src/api.rs's `list_operational_events` handler (registered as
+ * `.route("/api/ops/events", get(list_operational_events))`), which serializes rows into
+ * `OperationalEventDto` (api.rs:116-130) whose fields match `OpsEvent` above exactly. Confirmed
+ * live and field-matched against that DTO by Task 13's review.
+ */
+export function fetchEdgeEvents(edgeCode: string, limit = 20): Promise<OpsEvent[]> {
+  return getJson<OpsEvent[]>(`/api/ops/events?edge=${encodeURIComponent(edgeCode)}&limit=${limit}`);
+}
+
 /**
  * Posts an edge action. The real central-server route is `POST /api/edges/action` (singular,
  * `edge_code`/`site_code` in the JSON body -- see crates/central-server/src/api.rs's

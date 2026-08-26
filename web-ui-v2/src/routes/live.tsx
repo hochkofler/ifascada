@@ -1,13 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchEdgesCurrent, fetchTagsCurrent, type TagCurrent } from "@/lib/api-client";
+import { fetchEdgesCurrent, fetchTagsCurrent, type EdgeCurrent, type TagCurrent } from "@/lib/api-client";
 import { useOperationalContextStore } from "@/store/context-store";
 import { ContextBar } from "@/components/context-bar";
 import { EdgesOnlineBadge } from "@/components/live/edges-online-badge";
+import { EdgeDiagnosticsPanel } from "@/components/live/edge-diagnostics-panel";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useTranslation } from "react-i18next";
+
+// Mirrors EdgesOnlineBadge's own online-status formula (see that component's doc comment,
+// verified against postgres.rs's edge_current_state upsert): anything not "online" is treated
+// as disconnected/stale for the purpose of offering diagnostics.
+const ONLINE_STATUSES = new Set(["online"]);
+
+function isEdgeDisconnected(edge: EdgeCurrent): boolean {
+  return !ONLINE_STATUSES.has(String(edge.status || "").toLowerCase());
+}
 
 export const Route = createFileRoute("/live")({
   component: LivePage,
@@ -61,6 +71,8 @@ function LivePage() {
 
   const groups = useMemo(() => groupTagsByDevice(tags.data ?? []), [tags.data]);
 
+  const [diagnosticsEdge, setDiagnosticsEdge] = useState<{ edgeCode: string; site: string } | null>(null);
+
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-4">
@@ -68,6 +80,47 @@ function LivePage() {
         <EdgesOnlineBadge edges={edges.data ?? []} />
       </div>
       <h1 className="text-lg font-semibold">{t("live.title")}</h1>
+      {(edges.data ?? []).length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Edges</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            {(edges.data ?? []).map((e) => {
+              const disconnected = isEdgeDisconnected(e);
+              return (
+                <div
+                  key={`${e.site_code}|${e.edge_code}`}
+                  role={disconnected ? "button" : undefined}
+                  tabIndex={disconnected ? 0 : undefined}
+                  onClick={
+                    disconnected
+                      ? () => setDiagnosticsEdge({ edgeCode: e.edge_code, site: e.site_code })
+                      : undefined
+                  }
+                  onKeyDown={
+                    disconnected
+                      ? (ev) => {
+                          if (ev.key === "Enter" || ev.key === " ") {
+                            ev.preventDefault();
+                            setDiagnosticsEdge({ edgeCode: e.edge_code, site: e.site_code });
+                          }
+                        }
+                      : undefined
+                  }
+                  className={`flex items-center justify-between gap-2 rounded px-2 py-1 font-mono text-xs ${
+                    disconnected ? "cursor-pointer hover:bg-accent" : ""
+                  }`}
+                >
+                  <span>{e.edge_code}</span>
+                  <span className="text-muted-foreground">{e.last_seen_at ?? "-"}</span>
+                  <Badge variant={disconnected ? "destructive" : "default"}>{e.status}</Badge>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {groups.map((g) => (
           <Card key={g.key}>
@@ -94,6 +147,16 @@ function LivePage() {
         ))}
         {groups.length === 0 && <p className="text-sm text-muted-foreground">{t("live.noData")}</p>}
       </div>
+      {diagnosticsEdge && (
+        <EdgeDiagnosticsPanel
+          edgeCode={diagnosticsEdge.edgeCode}
+          site={diagnosticsEdge.site}
+          open={diagnosticsEdge !== null}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setDiagnosticsEdge(null);
+          }}
+        />
+      )}
     </div>
   );
 }
