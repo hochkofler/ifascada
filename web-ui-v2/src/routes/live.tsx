@@ -83,7 +83,7 @@ function LivePage() {
       {(edges.data ?? []).length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Edges</CardTitle>
+            <CardTitle className="text-sm">{t("live.edgesCardTitle")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-1">
             {(edges.data ?? []).map((e) => {
@@ -138,7 +138,7 @@ function LivePage() {
                     {formatValue(tg.value)}
                   </span>
                   <Badge variant={String(tg.quality?.status ?? "").toLowerCase() === "good" ? "default" : "outline"}>
-                    {tg.quality?.status ?? "Unknown"}
+                    {tg.quality?.status ?? t("live.qualityUnknown")}
                   </Badge>
                 </div>
               ))}

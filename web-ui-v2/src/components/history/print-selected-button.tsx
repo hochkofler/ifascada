@@ -31,15 +31,15 @@ export function PrintSelectedButton({
 
   async function handlePrint() {
     if (!tag) {
-      setMessage("No tag selected.");
+      setMessage(t("history.noTagSelected"));
       return;
     }
     if (!printCommandPayload) {
-      setMessage("Selected tag has no print automation (device.command print).");
+      setMessage(t("history.noPrintAutomation"));
       return;
     }
     if (selectedRows.length === 0) {
-      setMessage("Select at least one historical row.");
+      setMessage(t("history.selectAtLeastOneRow"));
       return;
     }
 
@@ -111,9 +111,9 @@ export function PrintSelectedButton({
         );
       }
 
-      setMessage(`Print command sent. samples=${String(selectedItems.length)} buffer=${bufferId}`);
+      setMessage(t("history.printCommandSent", { count: selectedItems.length, bufferId }));
     } catch (e) {
-      setMessage(`Print failed: ${e instanceof Error ? e.message : String(e)}`);
+      setMessage(t("history.printFailed", { error: e instanceof Error ? e.message : String(e) }));
     } finally {
       setPrinting(false);
     }

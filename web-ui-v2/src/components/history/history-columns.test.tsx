@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { historyColumns, toHistoryRows, type HistoryRow } from "./history-columns";
+import i18n from "@/lib/i18n";
+import { getHistoryColumns, toHistoryRows, type HistoryRow } from "./history-columns";
 import type { TagHistory } from "@/lib/api-client";
 
 // NOTE: the brief's illustrative sketch for this file used TanStack's `createColumnHelper`
@@ -7,7 +8,9 @@ import type { TagHistory } from "@/lib/api-client";
 // `ColumnDefinition<T>[]` (see data-table/types.ts: `accessorKey`/`header`/`type`/`cell`), which
 // has no `id` field -- confirmed against data-table/data-table.test.tsx's own usage. This test
 // keeps the brief's `c.id ?? accessorKey` fallback (still correct: `id` is just always absent).
-describe("historyColumns", () => {
+describe("getHistoryColumns", () => {
+  const historyColumns = getHistoryColumns(i18n.t);
+
   it("does not include tag_code, site_code, or edge_code columns", () => {
     const ids = historyColumns.map((c) => c.accessorKey);
     expect(ids).not.toContain("tag_code");
@@ -19,6 +22,14 @@ describe("historyColumns", () => {
     const ids = historyColumns.map((c) => c.accessorKey);
     expect(ids).toContain("unit");
     expect(ids).toContain("value");
+  });
+
+  it("translates all four column headers (default language is es)", () => {
+    const headers = Object.fromEntries(historyColumns.map((c) => [c.accessorKey, c.header]));
+    expect(headers.ts).toBe("Fecha y hora");
+    expect(headers.value).toBe("Valor");
+    expect(headers.unit).toBe("Unidad");
+    expect(headers.quality_status).toBe("Calidad");
   });
 
   it("formats the value cell using the numeric part only (unit lives in its own column)", () => {

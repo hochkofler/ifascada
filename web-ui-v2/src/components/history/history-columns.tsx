@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import { ColumnDisplayType, type ColumnDefinition } from "@/components/data-table/types";
 import type { TagHistory } from "@/lib/api-client";
 import { parseValueWithUnit } from "@/lib/value-formatting";
@@ -59,31 +60,37 @@ export function toHistoryRows(rows: TagHistory[]): HistoryRow[] {
  * `tag_code`/`site_code`/`edge_code` are deliberately omitted (spec: the History page is always
  * scoped to one already-selected tag, so repeating it per row is noise). `unit` is a column of
  * its own, separate from `value`.
+ *
+ * A function of `t` rather than a module-scope constant: headers need translated text, and
+ * `useTranslation()` can't be called from module scope (it's not a component/hook context) --
+ * call this from within the route component, which does have `t`.
  */
-export const historyColumns: ColumnDefinition<HistoryRow>[] = [
-  {
-    accessorKey: "ts",
-    header: "Timestamp",
-    type: ColumnDisplayType.String,
-    cell: (value) => new Date(String(value)).toLocaleString(),
-  },
-  {
-    accessorKey: "value",
-    header: "Value",
-    type: ColumnDisplayType.Number,
-    cell: (value) => {
-      const parsed = parseValueWithUnit(value);
-      return parsed ? String(parsed.number) : "-";
+export function getHistoryColumns(t: TFunction): ColumnDefinition<HistoryRow>[] {
+  return [
+    {
+      accessorKey: "ts",
+      header: t("history.timestamp"),
+      type: ColumnDisplayType.String,
+      cell: (value) => new Date(String(value)).toLocaleString(),
     },
-  },
-  {
-    accessorKey: "unit",
-    header: "Unit",
-    type: ColumnDisplayType.String,
-  },
-  {
-    accessorKey: "quality_status",
-    header: "Quality",
-    type: ColumnDisplayType.String,
-  },
-];
+    {
+      accessorKey: "value",
+      header: t("history.value"),
+      type: ColumnDisplayType.Number,
+      cell: (value) => {
+        const parsed = parseValueWithUnit(value);
+        return parsed ? String(parsed.number) : "-";
+      },
+    },
+    {
+      accessorKey: "unit",
+      header: t("history.unit"),
+      type: ColumnDisplayType.String,
+    },
+    {
+      accessorKey: "quality_status",
+      header: t("history.quality"),
+      type: ColumnDisplayType.String,
+    },
+  ];
+}

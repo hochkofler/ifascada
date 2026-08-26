@@ -6,7 +6,7 @@ import { fetchTagHistory, fetchTagsCurrent } from "@/lib/api-client";
 import { useOperationalContextStore } from "@/store/context-store";
 import { useAutoSelectFirst } from "@/lib/use-auto-select-first";
 import { numericValue } from "@/lib/value-formatting";
-import { historyColumns, toHistoryRows, type HistoryRow } from "@/components/history/history-columns";
+import { getHistoryColumns, toHistoryRows, type HistoryRow } from "@/components/history/history-columns";
 import { applySelectionClick } from "@/components/history/selection";
 import { PrintSelectedButton } from "@/components/history/print-selected-button";
 import { DataTable } from "@/components/data-table/DataTable";
@@ -114,10 +114,10 @@ function HistoryPage() {
           />
         ),
       },
-      ...historyColumns,
+      ...getHistoryColumns(t),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selected, lastClickedKey, filteredRows]
+    [selected, lastClickedKey, filteredRows, t]
   );
 
   const serverState: ServerState = { page: clampedPage, pageSize, sorting: [], filters: [], globalFilter: "" };
