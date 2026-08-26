@@ -1,0 +1,27 @@
+# web-ui-v2/nginx.conf.template
+server {
+    listen 3002;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    location /api/ {
+        proxy_pass ${CENTRAL_API_UPSTREAM}/api/;
+        proxy_set_header Host $host;
+    }
+
+    location /health/ {
+        proxy_pass ${CENTRAL_API_UPSTREAM}/health/;
+        proxy_set_header Host $host;
+    }
+
+    location = /healthz {
+        return 200 '{"status":"ok"}';
+        add_header Content-Type application/json;
+    }
+
+    # SPA fallback: any other route serves index.html so TanStack Router's client-side
+    # routing handles it (there is no server-side route matching for a Vite SPA).
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
