@@ -21,6 +21,19 @@ export function getJson<T>(path: string): Promise<T> {
   return request<T>(path);
 }
 
+/**
+ * POSTs a JSON body through the single `request()` auth-injection point. Every write call in
+ * this app (edge actions, edge reset) should go through this rather than a raw `fetch`, so real
+ * auth (when it lands -- see getAuthHeader's doc comment) only has to change in one place.
+ */
+export function postJson<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export type TagCurrent = {
   tag_code: string;
   device_code: string;
