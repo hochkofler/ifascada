@@ -12,6 +12,7 @@ export const en = {
     area: "Area",
     cell: "Cell",
     edge: "Edge",
+    clearFilters: "Clear filters",
     noData: "No tags for the current context",
     edgesCardTitle: "Edges",
     qualityUnknown: "Unknown",

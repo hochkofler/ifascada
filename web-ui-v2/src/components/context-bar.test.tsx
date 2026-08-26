@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ContextBar } from "./context-bar";
@@ -31,7 +31,10 @@ describe("ContextBar", () => {
     ]);
     renderWithQuery();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(await screen.findByRole("combobox")).toBeInTheDocument();
+    // ContextBar now renders Site + Line + Area + Cell + Edge as five separate comboboxes;
+    // Site is always the first in DOM order.
+    const [siteTrigger] = await screen.findAllByRole("combobox");
+    expect(siteTrigger).toBeInTheDocument();
   });
 
   it("populates the dropdown with the real, derived site options (not just an empty combobox)", async () => {
@@ -41,8 +44,8 @@ describe("ContextBar", () => {
     ]);
     const user = userEvent.setup();
     renderWithQuery();
-    const trigger = await screen.findByRole("combobox");
-    await user.click(trigger);
+    const [siteTrigger] = await screen.findAllByRole("combobox");
+    await user.click(siteTrigger);
     expect(await screen.findByRole("option", { name: "plant-a" })).toBeInTheDocument();
     expect(await screen.findByRole("option", { name: "plant-b" })).toBeInTheDocument();
   });
@@ -57,7 +60,7 @@ describe("ContextBar", () => {
       { site_code: "plant-c" } as never,
     ]);
     renderWithQuery();
-    await screen.findByRole("combobox");
+    await screen.findAllByRole("combobox");
     await vi.waitFor(() => {
       expect(useOperationalContextStore.getState().site).toBe("plant-b");
     });
@@ -66,9 +69,64 @@ describe("ContextBar", () => {
   it("shows a visible error affordance and disables the trigger when the sites fetch fails", async () => {
     vi.spyOn(apiClient, "fetchTagsCurrent").mockRejectedValue(new Error("network down"));
     renderWithQuery();
-    const trigger = await screen.findByRole("combobox");
+    const [siteTrigger] = await screen.findAllByRole("combobox");
     await vi.waitFor(() => {
-      expect(trigger).toBeDisabled();
+      expect(siteTrigger).toBeDisabled();
+    });
+  });
+});
+
+describe("ContextBar cascade selectors", () => {
+  beforeEach(() => {
+    useOperationalContextStore.setState({ site: "plant-a", line: "", area: "", cell: "", edge: "" });
+    vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([{ site_code: "plant-a" } as never]);
+    vi.spyOn(apiClient, "fetchLines").mockResolvedValue([{ code: "line-main", name: "Line Main" }]);
+    vi.spyOn(apiClient, "fetchAreas").mockResolvedValue([{ code: "area-pack", name: "Area Pack" }]);
+    vi.spyOn(apiClient, "fetchCells").mockResolvedValue([{ code: "cell-1", name: "Cell 1" }]);
+    vi.spyOn(apiClient, "fetchEdgesCurrent").mockResolvedValue([{ edge_code: "edge-pack-1" } as never]);
+  });
+
+  it("renders Line/Area/Cell/Edge dropdowns populated from the real hierarchy endpoints", async () => {
+    const qc = new QueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <ContextBar />
+      </QueryClientProvider>
+    );
+    const comboboxes = await screen.findAllByRole("combobox");
+    expect(comboboxes.length).toBeGreaterThanOrEqual(5); // site + line + area + cell + edge
+  });
+
+  it("clears Area/Cell/Edge when Line changes", async () => {
+    useOperationalContextStore.setState({ site: "plant-a", line: "line-main", area: "area-pack", cell: "cell-1", edge: "edge-pack-1" });
+    const qc = new QueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <ContextBar />
+      </QueryClientProvider>
+    );
+    await screen.findAllByRole("combobox");
+    useOperationalContextStore.getState().setLine("line-other");
+    await waitFor(() => {
+      const state = useOperationalContextStore.getState();
+      expect(state.area).toBe("");
+      expect(state.cell).toBe("");
+      expect(state.edge).toBe("");
+    });
+  });
+
+  it("shows a clear-filters button when any level below Site is selected, and clears them on click", async () => {
+    useOperationalContextStore.setState({ site: "plant-a", line: "line-main", area: "", cell: "", edge: "" });
+    const qc = new QueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <ContextBar />
+      </QueryClientProvider>
+    );
+    const clearButton = await screen.findByRole("button", { name: /limpiar filtros/i });
+    await userEvent.click(clearButton);
+    await waitFor(() => {
+      expect(useOperationalContextStore.getState().line).toBe("");
     });
   });
 });

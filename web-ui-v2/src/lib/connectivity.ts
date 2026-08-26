@@ -11,12 +11,13 @@ export const EDGE_STALE_AFTER_SECS = 45;
 /**
  * central-server writes two different literals into edge_current_state.status depending on
  * which ingestion path last touched the row: insert_telemetry hardcodes "online"
- * (postgres.rs:642-648); insert_health writes the edge-agent's own health-message literal,
- * "ok"/"degraded" (postgres.rs:681-700, compute_health_status() in edge-agent's mqtt_bridge.rs).
- * This is a real, already-documented backend inconsistency this frontend redesign doesn't fix
- * at the source -- but checking both literals here (exactly what web-ui/components/
- * context-bar.tsx already does) makes the frontend correct regardless of which one is live in
- * the column at read time. This is the fix for the "edges online 0/n" badge bug.
+ * (crates/central-server/src/persistence/postgres.rs:642-648); insert_health writes the
+ * edge-agent's own health-message literal, "ok"/"degraded" (postgres.rs:681-700,
+ * compute_health_status() in edge-agent's mqtt_bridge.rs). This is a real, already-documented
+ * backend inconsistency this frontend redesign doesn't fix at the source -- but checking both
+ * literals here makes the frontend correct regardless of which one is live in the column at
+ * read time. This is the fix for the "edges online 0/n" badge bug (the old web-ui v1's
+ * context-bar.tsx only checked the single literal "online", same bug class).
  */
 export const ONLINE_STATUSES = new Set(["online", "ok"]);
 

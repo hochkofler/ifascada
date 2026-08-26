@@ -12,6 +12,7 @@ export const es = {
     area: "Área",
     cell: "Celda",
     edge: "Edge",
+    clearFilters: "Limpiar filtros",
     noData: "Sin tags para el contexto actual",
     edgesCardTitle: "Edges",
     qualityUnknown: "Desconocido",
