@@ -11,12 +11,8 @@ export const SERVER_TIME_ZONE = "America/La_Paz";
 export function formatServerDateTime(iso: string): string {
   return new Intl.DateTimeFormat("es-BO", {
     timeZone: SERVER_TIME_ZONE,
-    year: "2-digit",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
+    dateStyle: "short",
+    timeStyle: "medium",
     hour12: false,
   }).format(new Date(iso));
 }
@@ -24,8 +20,7 @@ export function formatServerDateTime(iso: string): string {
 export function formatServerTime(iso: string): string {
   return new Intl.DateTimeFormat("es-BO", {
     timeZone: SERVER_TIME_ZONE,
-    hour: "2-digit",
-    minute: "2-digit",
+    timeStyle: "medium",
     hour12: false,
   }).format(new Date(iso));
 }
