@@ -3,20 +3,38 @@ server {
     listen 3002;
     root /usr/share/nginx/html;
     index index.html;
+    # 127.0.0.11 is Docker's embedded DNS resolver, available inside any container on a
+    # user-defined bridge network (ifascada_default is one). Combined with the `set` +
+    # variable `proxy_pass` below, this forces nginx to re-resolve CENTRAL_API_UPSTREAM per
+    # request instead of caching the IP it resolved to once at config-parse time -- otherwise
+    # a `docker compose up -d central-server` (which recreates only that service, per
+    # scripts/lib/DeployDockerService.ps1) leaves this container's nginx proxying to the dead
+    # old IP until web-ui-v2 itself is restarted.
+    resolver 127.0.0.11 valid=10s;
 
+    # NOTE: proxy_pass deliberately carries NO trailing URI here (unlike a static proxy_pass,
+    # which would rewrite the matched location prefix). When proxy_pass's target is a variable,
+    # nginx does not do that prefix-replacement -- verified live: a variant that appended
+    # `/api/` here made every request arrive at central-server as a literal `/api/`, silently
+    # dropping the rest of the path and query string (confirmed via central-server's own
+    # access log). Passing no URI keeps nginx's other behavior instead: the original,
+    # unmodified request URI (e.g. `/api/tags/current?limit=2`) is forwarded as-is, which is
+    # exactly what central-server's routes expect since they're already mounted under `/api/`.
     location /api/ {
-        proxy_pass ${CENTRAL_API_UPSTREAM}/api/;
+        set $upstream_api ${CENTRAL_API_UPSTREAM};
+        proxy_pass $upstream_api;
         proxy_set_header Host $host;
     }
 
     location /health/ {
-        proxy_pass ${CENTRAL_API_UPSTREAM}/health/;
+        set $upstream_health ${CENTRAL_API_UPSTREAM};
+        proxy_pass $upstream_health;
         proxy_set_header Host $host;
     }
 
     location = /healthz {
+        default_type application/json;
         return 200 '{"status":"ok"}';
-        add_header Content-Type application/json;
     }
 
     # SPA fallback: any other route serves index.html so TanStack Router's client-side
