@@ -46,4 +46,24 @@ describe("EdgeDiagnosticsPanel reset action", () => {
     await userEvent.click(screen.getByRole("button", { name: /reset/i }));
     await waitFor(() => expect(screen.getByText(/error al enviar/i)).toBeInTheDocument());
   });
+
+  // Regression test for the finding: the pre-reset `fetchEdgesCurrent` probe used to sit
+  // outside handleReset's try block. Since it's a real network call made while diagnosing a
+  // network problem, it can plausibly reject -- and when it did, that was an unhandled promise
+  // rejection with no error state shown, leaving disabled={resetState === "sent"} stuck forever
+  // even though resetEdge itself was never actually called.
+  it("shows an error state (not a permanently stuck 'sent' state) when the pre-reset probe itself rejects", async () => {
+    vi.spyOn(apiClient, "fetchEdgesCurrent").mockRejectedValue(new Error("network error"));
+    // spyOn (without restoring between tests) returns the SAME persistent spy across this whole
+    // describe block, so its call history accumulates from earlier tests -- clear it here so
+    // "not called" below asserts on this test's click only.
+    const resetEdgeSpy = vi.spyOn(edgeActions, "resetEdge");
+    resetEdgeSpy.mockClear();
+    vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
+    render(<EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />);
+    await userEvent.click(screen.getByRole("button", { name: /reset/i }));
+    await waitFor(() => expect(screen.getByText(/error al enviar/i)).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /reset/i })).not.toBeDisabled();
+    expect(resetEdgeSpy).not.toHaveBeenCalled();
+  });
 });

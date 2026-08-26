@@ -70,9 +70,14 @@ export function EdgeDiagnosticsPanel({
     const forEdge = edgeCode;
     const stillRelevant = () => aliveForRef.current === forEdge;
     setResetState("sent");
-    const before = await fetchEdgesCurrent(1, { edge: edgeCode });
-    const lastSeenBefore = before[0]?.last_seen_at;
+    let lastSeenBefore: string | undefined;
     try {
+      // The pre-reset probe is inside this try too: it's a real network call made while
+      // diagnosing a network problem, so it can plausibly reject. If it did while it lived
+      // outside this block, the rejection was unhandled and resetState stayed stuck at "sent"
+      // forever (disabled={resetState === "sent"} never clears) with nothing actually sent.
+      const before = await fetchEdgesCurrent(1, { edge: edgeCode });
+      lastSeenBefore = before[0]?.last_seen_at;
       await resetEdge({ site_code: site, edge_code: edgeCode, reason: "manual reset from diagnostics panel" });
     } catch {
       if (stillRelevant()) setResetState("error");
@@ -101,7 +106,12 @@ export function EdgeDiagnosticsPanel({
           <SheetTitle>{edgeCode}</SheetTitle>
         </SheetHeader>
         <div className="flex flex-col gap-3 px-4">
-          <Button onClick={handleReset} disabled={resetState === "sent"}>
+          <Button
+            onClick={() => {
+              void handleReset();
+            }}
+            disabled={resetState === "sent"}
+          >
             {t("live.diagnostics.reset")}
           </Button>
           {resetState === "sent" && (
