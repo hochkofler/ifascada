@@ -6,7 +6,7 @@ import { fetchTagHistory, fetchTagsCurrent } from "@/lib/api-client";
 import { useOperationalContextStore } from "@/store/context-store";
 import { useAutoSelectFirst } from "@/lib/use-auto-select-first";
 import { numericValue } from "@/lib/value-formatting";
-import { historyColumns, toHistoryRow, type HistoryRow } from "@/components/history/history-columns";
+import { historyColumns, toHistoryRows, type HistoryRow } from "@/components/history/history-columns";
 import { applySelectionClick } from "@/components/history/selection";
 import { PrintSelectedButton } from "@/components/history/print-selected-button";
 import { DataTable } from "@/components/data-table/DataTable";
@@ -48,13 +48,13 @@ function HistoryPage() {
     enabled: Boolean(selectedTag),
   });
 
-  // rowKey is derived from each row's position in the RAW fetched set (before the Value>x
-  // filter), so it stays stable as `minValue` changes -- only a different tag selection (a
-  // different underlying fetch) changes it.
-  const allRows = useMemo(
-    () => (history.data ?? []).map((r, i) => toHistoryRow(r, i)),
-    [history.data]
-  );
+  // rowKey is derived per-row from an ordinal among rows sharing the same `ts` (see
+  // toHistoryRows's doc comment) -- stable as `minValue` changes (the Value>x filter only slices
+  // this already-built array) AND stable across a background refetch that returns new samples
+  // (react-query's default staleTime: 0 / refetchOnWindowFocus: true, set in main.tsx, means
+  // this can happen at any time). Only a different tag selection (a different underlying fetch)
+  // meaningfully changes existing rowKeys, since it's for wholly different rows.
+  const allRows = useMemo(() => toHistoryRows(history.data ?? []), [history.data]);
   const filteredRows = useMemo(
     () =>
       allRows.filter((r) => {

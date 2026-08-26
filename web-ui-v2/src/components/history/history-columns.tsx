@@ -15,13 +15,39 @@ import { parseValueWithUnit } from "@/lib/value-formatting";
  */
 export type HistoryRow = TagHistory & { unit: string | null; rowKey: string };
 
-export function toHistoryRow(row: TagHistory, index: number): HistoryRow {
-  const parsed = parseValueWithUnit(row.value);
-  return {
-    ...row,
-    unit: parsed?.unit ?? "-",
-    rowKey: `${row.tag_code}-${row.ts}-${String(index)}`,
-  };
+/**
+ * Converts the raw fetched history rows into `HistoryRow`s, deriving each `rowKey` as an
+ * ordinal AMONG ROWS SHARING THE SAME `ts` (`${tag_code}-${ts}-${ordinalWithinSameTs}`) rather
+ * than the row's position in the whole array.
+ *
+ * Why not array position (the original scheme): it's stable across pagination/filtering (both
+ * slice/filter the already-built array without changing what's already in it), but NOT stable
+ * across a background refetch. main.tsx's `QueryClient` uses default options (`staleTime: 0`,
+ * `refetchOnWindowFocus: true`), so a background refetch that returns even one new sample
+ * anywhere in the result renumbers every subsequent row's array-position key. Since selection.ts
+ * keys selection by `rowKey`, previously-selected rows would silently uncheck (their old key no
+ * longer matches any row) while the displayed "selected" count still included them, and
+ * re-clicking the same physical row under its new key could double-add it to the print buffer --
+ * a duplicated weight on a real printed ticket (see print-selected-button.tsx).
+ *
+ * The ordinal-within-`ts` scheme fixes this: `tag_code` and `ts` don't change across a refetch
+ * for a given real sample, and a row's ordinal only depends on the relative order of OTHER rows
+ * that share its exact `ts` -- an unrelated row with a different `ts` being inserted anywhere
+ * else in the array (the shape of a background refetch picking up new samples) does not shift
+ * it.
+ */
+export function toHistoryRows(rows: TagHistory[]): HistoryRow[] {
+  const ordinalByTs = new Map<string, number>();
+  return rows.map((row) => {
+    const ordinal = ordinalByTs.get(row.ts) ?? 0;
+    ordinalByTs.set(row.ts, ordinal + 1);
+    const parsed = parseValueWithUnit(row.value);
+    return {
+      ...row,
+      unit: parsed?.unit ?? "-",
+      rowKey: `${row.tag_code}-${row.ts}-${String(ordinal)}`,
+    };
+  });
 }
 
 /**
