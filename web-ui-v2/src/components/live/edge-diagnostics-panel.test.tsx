@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { EdgeDiagnosticsPanel } from "./edge-diagnostics-panel";
 import * as edgeActions from "@/lib/edge-actions";
 import * as apiClient from "@/lib/api-client";
+import "../../lib/i18n";
 
 describe("EdgeDiagnosticsPanel reset action", () => {
   it("shows confirmed-recovered feedback once last_seen_at actually advances after reset", async () => {

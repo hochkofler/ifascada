@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { resetEdge } from "@/lib/edge-actions";
 import { fetchEdgesCurrent, fetchEdgeEvents, type OpsEvent } from "@/lib/api-client";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -23,6 +24,7 @@ export function EdgeDiagnosticsPanel({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const [resetState, setResetState] = useState<ResetState>("idle");
   const [events, setEvents] = useState<OpsEvent[]>([]);
   const [eventsError, setEventsError] = useState(false);
@@ -100,32 +102,27 @@ export function EdgeDiagnosticsPanel({
         </SheetHeader>
         <div className="flex flex-col gap-3 px-4">
           <Button onClick={handleReset} disabled={resetState === "sent"}>
-            Reset
+            {t("live.diagnostics.reset")}
           </Button>
           {resetState === "sent" && (
-            <p className="text-sm text-muted-foreground">
-              Comando enviado, esperando confirmación del edge...
-            </p>
+            <p className="text-sm text-muted-foreground">{t("live.diagnostics.sent")}</p>
           )}
           {resetState === "confirmed-recovered" && (
-            <p className="text-sm text-emerald-600">Reset confirmado: el edge volvió a reportar.</p>
+            <p className="text-sm text-emerald-600">{t("live.diagnostics.confirmedRecovered")}</p>
           )}
           {resetState === "timed-out-no-recovery" && (
-            <p className="text-sm text-amber-600">
-              El comando se envió, pero el edge no confirmó recuperación en 30s. Puede requerir intervención
-              manual.
-            </p>
+            <p className="text-sm text-amber-600">{t("live.diagnostics.timedOutNoRecovery")}</p>
           )}
           {resetState === "error" && (
-            <p className="text-sm text-destructive">Error al enviar el comando de reset.</p>
+            <p className="text-sm text-destructive">{t("live.diagnostics.error")}</p>
           )}
 
-          <h3 className="mt-2 text-sm font-medium">Eventos recientes</h3>
+          <h3 className="mt-2 text-sm font-medium">{t("live.diagnostics.recentEvents")}</h3>
           {eventsError && (
-            <p className="text-sm text-destructive">No se pudo cargar el historial de eventos.</p>
+            <p className="text-sm text-destructive">{t("live.diagnostics.eventsError")}</p>
           )}
           {!eventsError && events.length === 0 && (
-            <p className="text-sm text-muted-foreground">Sin eventos recientes para este edge.</p>
+            <p className="text-sm text-muted-foreground">{t("live.diagnostics.noEvents")}</p>
           )}
           <ul className="flex flex-col gap-1 overflow-y-auto text-xs">
             {events.map((e) => (

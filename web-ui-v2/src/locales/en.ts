@@ -13,6 +13,17 @@ export const en = {
     cell: "Cell",
     edge: "Edge",
     noData: "No tags for the current context",
+    diagnostics: {
+      reset: "Reset",
+      sent: "Command sent, waiting for edge confirmation...",
+      confirmedRecovered: "Reset confirmed: the edge reported again.",
+      timedOutNoRecovery:
+        "The command was sent, but the edge didn't confirm recovery within 30s. May require manual intervention.",
+      error: "Failed to send the reset command.",
+      recentEvents: "Recent events",
+      eventsError: "Could not load the event history.",
+      noEvents: "No recent events for this edge.",
+    },
   },
   history: {
     title: "Historical query",
