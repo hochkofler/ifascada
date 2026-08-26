@@ -66,4 +66,25 @@ describe("EdgeDiagnosticsPanel reset action", () => {
     expect(screen.getByRole("button", { name: /reset/i })).not.toBeDisabled();
     expect(resetEdgeSpy).not.toHaveBeenCalled();
   });
+
+  // Regression test for the finding: the POST-reset recovery poll loop used to sit outside any
+  // try/catch of its own. It makes RESET_POLL_ATTEMPTS (15) real network calls in a row right
+  // after commanding a reset on a network that's already having problems, so it's more likely to
+  // hit a rejection than the single pre-reset probe covered above. When it did, that was an
+  // unhandled promise rejection with no error state shown, leaving the reset button permanently
+  // disabled (resetState stuck at "sent") and the "command sent" message displayed forever.
+  it("shows an error state (not a permanently stuck 'sent' state) when the poll loop itself rejects", async () => {
+    vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({ accepted: true, topic: "x", request_id: null });
+    vi.spyOn(apiClient, "fetchEdgesCurrent")
+      .mockResolvedValueOnce([{ last_seen_at: "2026-08-20T10:00:00Z" } as never]) // pre-reset probe: succeeds
+      .mockRejectedValueOnce(new Error("network error")); // first poll-loop attempt: rejects
+    vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
+    render(<EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />);
+    await userEvent.click(screen.getByRole("button", { name: /reset/i }));
+    // The poll loop's first attempt only fires after one RESET_POLL_INTERVAL_MS (2000ms) wait --
+    // raise waitFor's timeout (and the outer test timeout) to comfortably clear that plus overhead,
+    // matching the pattern used by the confirmed-recovered test above.
+    await waitFor(() => expect(screen.getByText(/error al enviar/i)).toBeInTheDocument(), { timeout: 8000 });
+    expect(screen.getByRole("button", { name: /reset/i })).not.toBeDisabled();
+  }, 10000);
 });

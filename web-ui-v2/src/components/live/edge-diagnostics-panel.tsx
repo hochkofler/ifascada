@@ -87,14 +87,24 @@ export function EdgeDiagnosticsPanel({
     // succeeded, not that the edge came back (see lib/edge-actions.ts's resetEdge doc comment,
     // Task 13's finding). Give it a bounded window matching this project's established
     // health-poll pattern (scripts/lib/DeployDockerService.ps1's Test-ServiceHealthy).
-    for (let attempt = 0; attempt < RESET_POLL_ATTEMPTS; attempt++) {
-      await new Promise((r) => setTimeout(r, RESET_POLL_INTERVAL_MS));
-      if (!stillRelevant()) return;
-      const after = await fetchEdgesCurrent(1, { edge: edgeCode });
-      if (after[0]?.last_seen_at && after[0].last_seen_at !== lastSeenBefore) {
-        if (stillRelevant()) setResetState("confirmed-recovered");
-        return;
+    try {
+      // This loop makes RESET_POLL_ATTEMPTS real network calls in a row, right after
+      // commanding a reset on a network that's already having problems -- much more likely
+      // to hit a rejected fetch than the single pre-reset probe above. Without this try/catch,
+      // a rejection here is unhandled and resetState stays stuck at "sent" forever, same
+      // failure mode the pre-reset probe was already fixed for.
+      for (let attempt = 0; attempt < RESET_POLL_ATTEMPTS; attempt++) {
+        await new Promise((r) => setTimeout(r, RESET_POLL_INTERVAL_MS));
+        if (!stillRelevant()) return;
+        const after = await fetchEdgesCurrent(1, { edge: edgeCode });
+        if (after[0]?.last_seen_at && after[0].last_seen_at !== lastSeenBefore) {
+          if (stillRelevant()) setResetState("confirmed-recovered");
+          return;
+        }
       }
+    } catch {
+      if (stillRelevant()) setResetState("error");
+      return;
     }
     if (stillRelevant()) setResetState("timed-out-no-recovery");
   }
