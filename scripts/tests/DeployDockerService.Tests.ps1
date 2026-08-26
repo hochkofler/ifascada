@@ -143,6 +143,24 @@ Describe "Invoke-DockerServiceDeploy" {
         $script:capturedEnvUploads[0] | Should Match "CENTRAL_IMAGE=ifascada/central-server:1.0.3"
     }
 
+    It "uses WEB_UI_V2_IMAGE (not WEB_UI_IMAGE) as the env var for the web-ui-v2 service" {
+        Mock Invoke-RemoteCommand {
+            param($TargetHost, $SshUser, $SshKeyPath, $Command)
+            if ($Command -like "type*") { return "WEB_UI_IMAGE=ifascada/web-ui:1.0.4`r`nWEB_UI_V2_IMAGE=ifascada/web-ui-v2:1.0.0" }
+            return ""
+        }
+        Mock Test-ServiceHealthy { $true }
+
+        Invoke-DockerServiceDeploy -Service "web-ui-v2" -TargetHost "192.168.103.154" `
+            -SshUser "ifa" -SshKeyPath "C:\key" -ImageTarLocalPath "C:\image.tar" `
+            -NewImageRef "ifascada/web-ui-v2:1.0.1" -HealthUrl "http://192.168.103.154:3002/healthz"
+
+        $script:capturedEnvUploads.Count | Should Be 1
+        $script:capturedEnvUploads[0] | Should Match "WEB_UI_V2_IMAGE=ifascada/web-ui-v2:1.0.1"
+        # The unrelated, already-shipped web-ui service's own image var must be left untouched.
+        $script:capturedEnvUploads[0] | Should Match "WEB_UI_IMAGE=ifascada/web-ui:1.0.4"
+    }
+
     # Wrapped in its own Context: Pester 3.4.0 accumulates a mock's call history across
     # every It in the same Describe unless each It gets a fresh scope, which a Context
     # boundary provides. Without this, Test-ServiceHealthy's count here would include the

@@ -114,6 +114,18 @@ services:
     ports:
       - "${CENTRAL_API_PORT:-8088}:8088"
 
+  web-ui-v2:
+    build:
+      context: .
+      dockerfile: web-ui-v2/Dockerfile
+    container_name: ifascada-web-ui-v2
+    profiles: ["v2"]
+    restart: unless-stopped
+    environment:
+      CENTRAL_API_UPSTREAM: http://central-server:8088
+    ports:
+      - "3002:3002"
+
 volumes:
   timescaledb_data:
   redis_data:

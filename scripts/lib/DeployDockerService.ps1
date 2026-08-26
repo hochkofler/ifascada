@@ -106,7 +106,7 @@ function Copy-ToRemote {
 # returns normally.
 function Invoke-DockerServiceDeploy {
     param(
-        [Parameter(Mandatory)][ValidateSet("central-server", "web-ui")][string]$Service,
+        [Parameter(Mandatory)][ValidateSet("central-server", "web-ui", "web-ui-v2")][string]$Service,
         [Parameter(Mandatory)][string]$TargetHost,
         [Parameter(Mandatory)][string]$SshUser,
         [Parameter(Mandatory)][string]$SshKeyPath,
@@ -118,7 +118,12 @@ function Invoke-DockerServiceDeploy {
         [int]$HealthPollIntervalSeconds = 2
     )
 
-    $envVarName = if ($Service -eq "central-server") { "CENTRAL_IMAGE" } else { "WEB_UI_IMAGE" }
+    $envVarName = switch ($Service) {
+        "central-server" { "CENTRAL_IMAGE" }
+        "web-ui"         { "WEB_UI_IMAGE" }
+        "web-ui-v2"      { "WEB_UI_V2_IMAGE" }
+        default          { throw "Unhandled service: $Service" }
+    }
     # Backslashes matter here, not just style: the remote command shell for a non-interactive
     # `ssh host "..."` invocation on this Windows host is cmd.exe, and cmd's internal `type`
     # command fails to resolve a forward-slash path ("system cannot find the file specified")

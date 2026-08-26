@@ -1,6 +1,6 @@
 # scripts/deploy-docker-service.ps1
 param(
-    [Parameter(Mandatory)][ValidateSet("central-server", "web-ui")][string]$Service,
+    [Parameter(Mandatory)][ValidateSet("central-server", "web-ui", "web-ui-v2")][string]$Service,
     [Parameter(Mandatory)][string]$TargetHost,
     [Parameter(Mandatory)][string]$SshUser,
     [Parameter(Mandatory)][string]$SshKeyPath,
