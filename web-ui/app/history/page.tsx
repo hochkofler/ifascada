@@ -54,10 +54,12 @@ function findPrintPersistAction(meta: Record<string, unknown> | undefined): Devi
   return null;
 }
 
-// Upper bound on how much history we pull per tag selection. Date filtering and pagination both
-// happen client-side over this set (the API has no date-range parameter), so this is effectively
-// "how far back a date filter can reach" -- generous enough for interactive use without pulling
-// unbounded history for a tag that's been reporting for months.
+// Upper bound on how much history we pull per tag selection/date-range in one request. The date
+// range (when set) is applied server-side (WHERE ts >= from AND ts <= to, before LIMIT), so this
+// no longer bounds how far back a filter can reach -- it's just a safety cap on how many matching
+// rows come back in one page-load, generous enough for interactive use without pulling unbounded
+// history for a tag that's been reporting for months. Pagination over the returned set is still
+// client-side.
 const HISTORY_FETCH_LIMIT = 2000;
 
 // Stable row identity independent of which page it's currently displayed on -- needed so a
@@ -83,28 +85,21 @@ export default function HistoryPage() {
   const filter = { site, line: line || undefined, area: area || undefined, cell: cell || undefined, edge: edge || undefined };
   const tags = useQuery({ queryKey: ["history-tags", filter], queryFn: () => fetchTagsCurrent(500, filter) });
   useAutoSelectFirstTag(tags.data, selectedTag, setSelectedTag);
+  // Converted to RFC3339/UTC for the API -- a date filter never hides tags in the "Tag" selector
+  // above (that list comes from fetchTagsCurrent, an unrelated query), only the rows fetched here
+  // for the already-selected tag.
+  const dateRange = {
+    from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
+    to: dateTo ? new Date(dateTo).toISOString() : undefined,
+  };
   const history = useQuery({
-    queryKey: ["history-events", selectedTag, HISTORY_FETCH_LIMIT],
-    queryFn: () => fetchTagHistory(selectedTag, HISTORY_FETCH_LIMIT, 0),
+    queryKey: ["history-events", selectedTag, HISTORY_FETCH_LIMIT, dateRange.from, dateRange.to],
+    queryFn: () => fetchTagHistory(selectedTag, HISTORY_FETCH_LIMIT, 0, dateRange),
     enabled: Boolean(selectedTag),
   });
 
-  const allRows = useMemo(() => history.data ?? [], [history.data]);
-  const fromMs = dateFrom ? new Date(dateFrom).getTime() : null;
-  const toMs = dateTo ? new Date(dateTo).getTime() : null;
-  // Filtered against the full fetched set, then paginated client-side -- a date filter never
-  // hides tags in the "Tag" selector above (that list comes from fetchTagsCurrent, an unrelated
-  // query), only the rows shown here for the already-selected tag.
-  const filteredRows = useMemo(
-    () =>
-      allRows.filter((r) => {
-        const t = new Date(r.ts).getTime();
-        if (fromMs !== null && t < fromMs) return false;
-        if (toMs !== null && t > toMs) return false;
-        return true;
-      }),
-    [allRows, fromMs, toMs]
-  );
+  // Already filtered by the server when a date range is set -- just paginate client-side.
+  const filteredRows = useMemo(() => history.data ?? [], [history.data]);
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const clampedPage = Math.min(page, pageCount);
   const rows = useMemo(

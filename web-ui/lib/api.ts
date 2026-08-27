@@ -151,10 +151,14 @@ export function fetchConnectionsCurrent(limit = 200, filter?: LiveFilter) {
   return getJson<ConnectionCurrent[]>(`/api/connections/current?${qs}`);
 }
 
-export function fetchTagHistory(tagCode: string, limit = 200, offset = 0) {
-  return getJson<TagHistory[]>(
-    `/api/tags/${encodeURIComponent(tagCode)}/history?limit=${limit}&offset=${offset}`
-  );
+export function fetchTagHistory(
+  tagCode: string,
+  limit = 200,
+  offset = 0,
+  range?: { from?: string; to?: string }
+) {
+  const qs = toQuery({ limit, offset, from: range?.from, to: range?.to });
+  return getJson<TagHistory[]>(`/api/tags/${encodeURIComponent(tagCode)}/history?${qs}`);
 }
 
 export function fetchOperationalEvents(
