@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { resetEdge } from "@/lib/edge-actions";
-import { fetchEdgesCurrent, fetchEdgeEvents, type OpsEvent } from "@/lib/api-client";
+import { fetchEdgesCurrent, fetchEdgeEvents, fetchTagsCurrent, type OpsEvent, type TagCurrent } from "@/lib/api-client";
+import { formatServerTime } from "@/lib/datetime";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 
@@ -28,6 +29,7 @@ export function EdgeDiagnosticsPanel({
   const [resetState, setResetState] = useState<ResetState>("idle");
   const [events, setEvents] = useState<OpsEvent[]>([]);
   const [eventsError, setEventsError] = useState(false);
+  const [tags, setTags] = useState<TagCurrent[]>([]);
 
   // Guards setState calls made after this component has unmounted (e.g. the Sheet is closed
   // mid-poll) or after the target edge has changed out from under an in-flight poll loop --
@@ -63,6 +65,27 @@ export function EdgeDiagnosticsPanel({
       });
     return () => {
       cancelled = true;
+    };
+  }, [open, edgeCode]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const load = () => {
+      fetchTagsCurrent(200, { edge: edgeCode })
+        .then((data) => {
+          if (!cancelled) setTags(data);
+        })
+        .catch(() => {
+          // Telemetry fetch failures don't block the rest of the panel (reset, events) --
+          // an empty list just falls through to the "no telemetry" empty state.
+        });
+    };
+    load();
+    const interval = setInterval(load, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
     };
   }, [open, edgeCode]);
 
@@ -136,6 +159,21 @@ export function EdgeDiagnosticsPanel({
           {resetState === "error" && (
             <p className="text-sm text-destructive">{t("live.diagnostics.error")}</p>
           )}
+
+          <h3 className="mt-2 text-sm font-medium">{t("live.diagnostics.telemetry")}</h3>
+          {tags.length === 0 && (
+            <p className="text-sm text-muted-foreground">{t("live.diagnostics.noTelemetry")}</p>
+          )}
+          <ul className="flex flex-col gap-1 text-xs">
+            {tags.map((tg) => (
+              <li key={tg.tag_code} className="flex items-center justify-between gap-2 border-b py-1 font-mono">
+                <span className="truncate">{tg.tag_code}</span>
+                <span>{String(tg.value)}</span>
+                <span className="text-muted-foreground">{tg.quality?.status ?? "-"}</span>
+                <span className="text-muted-foreground">{tg.ts ? formatServerTime(tg.ts) : "-"}</span>
+              </li>
+            ))}
+          </ul>
 
           <h3 className="mt-2 text-sm font-medium">{t("live.diagnostics.recentEvents")}</h3>
           {eventsError && (

@@ -88,3 +88,32 @@ describe("EdgeDiagnosticsPanel reset action", () => {
     expect(screen.getByRole("button", { name: /reset/i })).not.toBeDisabled();
   }, 10000);
 });
+
+describe("EdgeDiagnosticsPanel telemetry section", () => {
+  it("shows the selected edge's tags with value, quality, and formatted time", async () => {
+    vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([
+      {
+        tag_code: "tag_m1_t001",
+        device_code: "dev-mix-1",
+        edge_code: "edge-mix-1",
+        site_code: "plant-a",
+        ts: "2026-08-26T18:31:13.144564Z",
+        value: 12.5,
+        quality: { status: "Good" },
+      } as never,
+    ]);
+    vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
+    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    expect(await screen.findByText("tag_m1_t001")).toBeInTheDocument();
+    expect(screen.getByText("12.5")).toBeInTheDocument();
+    expect(screen.getByText("Good")).toBeInTheDocument();
+    expect(screen.getByText(/14:31/)).toBeInTheDocument(); // formatServerTime, America/La_Paz = UTC-4
+  });
+
+  it("shows the no-telemetry message when the edge has no tags", async () => {
+    vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([]);
+    vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
+    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    expect(await screen.findByText(/sin tags reportando/i)).toBeInTheDocument();
+  });
+});

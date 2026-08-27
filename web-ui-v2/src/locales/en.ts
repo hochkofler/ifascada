@@ -30,6 +30,8 @@ export const en = {
       recentEvents: "Recent events",
       eventsError: "Could not load the event history.",
       noEvents: "No recent events for this edge.",
+      telemetry: "Telemetry",
+      noTelemetry: "No tags reporting for this edge.",
     },
   },
   history: {

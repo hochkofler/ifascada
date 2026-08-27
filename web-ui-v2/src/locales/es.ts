@@ -30,6 +30,8 @@ export const es = {
       recentEvents: "Eventos recientes",
       eventsError: "No se pudo cargar el historial de eventos.",
       noEvents: "Sin eventos recientes para este edge.",
+      telemetry: "Telemetría",
+      noTelemetry: "Sin tags reportando para este edge.",
     },
   },
   history: {
