@@ -16,6 +16,7 @@ export const en = {
     noData: "No tags for the current context",
     edgesCardTitle: "Edges",
     qualityUnknown: "Unknown",
+    deviceStateTooltip: "Device state: {{state}}",
     devicesCardTitle: "Devices",
     lastSeen: "Last seen",
     noDevices: "No devices reporting",

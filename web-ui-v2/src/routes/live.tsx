@@ -88,7 +88,7 @@ function LivePage() {
               }}
               className="flex cursor-pointer items-center gap-3 rounded px-2 py-1 font-mono text-xs hover:bg-accent"
             >
-              <ConnectivityDot state={r.lamp} title={`device_state: ${r.device.state || "unknown"}`} />
+              <ConnectivityDot state={r.lamp} title={t("live.deviceStateTooltip", { state: r.device.state || t("live.qualityUnknown") })} />
               <span className="min-w-0 flex-1 truncate">{r.device.device_code}</span>
               <span className="text-muted-foreground">{r.device.edge_code}</span>
               <span className="text-muted-foreground">
