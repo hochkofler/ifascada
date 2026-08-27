@@ -148,3 +148,34 @@ describe("EdgeDiagnosticsPanel SSE telemetry patch", () => {
     expect(subscribeSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("EdgeDiagnosticsPanel SSE load throttling", () => {
+  it("does not call fetchTagsCurrent more than once per second even under a burst of SSE events", async () => {
+    vi.useFakeTimers();
+    const fetchTagsSpy = vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([]);
+    vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
+    let sseHandler: (() => void) | undefined;
+    vi.spyOn(sse, "subscribeSse").mockImplementation((onMessage) => {
+      sseHandler = onMessage as () => void;
+      return () => {};
+    });
+    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    await vi.waitFor(() => expect(sseHandler).toBeTypeOf("function"));
+    fetchTagsSpy.mockClear(); // clear the initial on-open load() call
+
+    // Simulate a burst of ~25ms-apart SSE events over 3 seconds, matching the real
+    // edge-sim telemetry rate this finding was based on.
+    for (let elapsedMs = 0; elapsedMs < 3000; elapsedMs += 25) {
+      sseHandler!();
+      await vi.advanceTimersByTimeAsync(25);
+    }
+
+    // A once-per-second throttle allows at most ~3-4 SSE-triggered load() calls over
+    // 3 seconds, not the ~120 a call-per-event implementation would produce. (The
+    // existing 2.5s poll's own load() calls are separate and not being counted against
+    // this cap -- this test's burst duration is short enough that at most 1-2 of those
+    // land too, so a generous cap of 8 avoids coupling this test to poll-vs-throttle timing.)
+    expect(fetchTagsSpy.mock.calls.length).toBeLessThanOrEqual(8);
+    vi.useRealTimers();
+  });
+});

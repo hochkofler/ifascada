@@ -58,6 +58,7 @@ export function LivePage() {
 
   const queryClient = useQueryClient();
   const pendingRef = useRef<Map<string, RtEvent>>(new Map());
+  const lastInvalidateAtRef = useRef(0);
 
   useEffect(() => {
     const unsubscribe = subscribeSse(
@@ -72,6 +73,15 @@ export function LivePage() {
     const flush = setInterval(() => {
       if (pendingRef.current.size === 0) return;
       pendingRef.current.clear();
+      // Throttle to at most one SSE-triggered refetch round per second. Without this,
+      // a continuous telemetry stream (the real edge-sim fleet publishes roughly one
+      // event every 25ms) keeps this 120ms tick's pendingRef non-empty essentially
+      // always, turning an intended "occasional nudge on top of the 2.5s poll" into a
+      // refetch storm that exhausts central-server's rate limiter (confirmed live
+      // during Task 9 verification: ~120ms actual request cadence instead of ~2.5s).
+      const now = Date.now();
+      if (now - lastInvalidateAtRef.current < 1000) return;
+      lastInvalidateAtRef.current = now;
       // A real-time nudge: invalidate so the next poll tick (already running every 2.5s) fires
       // sooner instead of waiting out the full interval. This deliberately does NOT hand-patch
       // individual device/edge objects in the cache -- reusing the same fetchDevicesCurrent/

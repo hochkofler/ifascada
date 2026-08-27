@@ -50,3 +50,39 @@ describe("Live page SSE patching", () => {
     expect(sseHandler).toBeTypeOf("function");
   });
 });
+
+describe("Live page SSE refetch throttling", () => {
+  it("does not invalidate queries more than once per second even under a burst of SSE events", async () => {
+    vi.useFakeTimers();
+    let sseHandler: ((evt: sse.RtEvent) => void) | undefined;
+    vi.spyOn(apiClient, "fetchEdgesCurrent").mockResolvedValue([]);
+    vi.spyOn(apiClient, "fetchDevicesCurrent").mockResolvedValue([]);
+    vi.spyOn(sse, "subscribeSse").mockImplementation((onMessage) => {
+      sseHandler = onMessage;
+      return () => {};
+    });
+    const qc = new QueryClient();
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    render(
+      <QueryClientProvider client={qc}>
+        <Suspense fallback={<div>Loading...</div>}>
+          <LivePage />
+        </Suspense>
+      </QueryClientProvider>
+    );
+    await vi.waitFor(() => expect(sseHandler).toBeTypeOf("function"));
+
+    // Simulate the real edge-sim load: an SSE event every ~25ms for 3 seconds --
+    // far faster than the 120ms flush tick, matching the burst this finding was based on.
+    for (let elapsedMs = 0; elapsedMs < 3000; elapsedMs += 25) {
+      sseHandler!({ event_type: "telemetry", site: "plant-a", agent: "edge-mix-1", payload: { device_id: "dev-mix-1" }, published_at: new Date().toISOString() });
+      await vi.advanceTimersByTimeAsync(25);
+    }
+
+    // Over 3 seconds, a once-per-second throttle allows at most 3-4 invalidation rounds
+    // (2 queries invalidated per round: live-edges, live-devices) -- not the ~25 rounds
+    // a 120ms-tick-driven invalidation would produce.
+    expect(invalidateSpy.mock.calls.length).toBeLessThanOrEqual(8);
+    vi.useRealTimers();
+  });
+});

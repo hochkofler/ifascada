@@ -82,7 +82,18 @@ export function EdgeDiagnosticsPanel({
     };
     load();
     const interval = setInterval(load, 2500);
-    const unsubscribeSse = subscribeSse(() => load(), { edge: edgeCode, excludeRaw: true });
+    const lastSseLoadAtRef = { current: 0 };
+    const unsubscribeSse = subscribeSse(() => {
+      // Throttle to at most one SSE-triggered load per second -- without this, a
+      // continuous per-edge telemetry stream (the real edge-sim fleet publishes
+      // roughly one event every 25ms per edge across its 5 tags) calls load() on
+      // every single message, far exceeding the existing 2.5s poll and contributing
+      // to the rate-limit exhaustion confirmed live during Task 9 verification.
+      const now = Date.now();
+      if (now - lastSseLoadAtRef.current < 1000) return;
+      lastSseLoadAtRef.current = now;
+      load();
+    }, { edge: edgeCode, excludeRaw: true });
     return () => {
       cancelled = true;
       clearInterval(interval);
