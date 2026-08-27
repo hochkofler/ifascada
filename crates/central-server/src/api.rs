@@ -141,12 +141,19 @@ struct RtEventDto {
 #[derive(Debug, Deserialize)]
 struct ListQuery {
     limit: Option<i64>,
-    offset: Option<i64>,
     site: Option<String>,
     line: Option<String>,
     area: Option<String>,
     cell: Option<String>,
     edge: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagHistoryQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    from: Option<chrono::DateTime<chrono::Utc>>,
+    to: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1416,7 +1423,7 @@ fn to_hex(bytes: &[u8]) -> String {
 async fn get_tag_history(
     State(state): State<ApiState>,
     Path(tag_code): Path<String>,
-    Query(q): Query<ListQuery>,
+    Query(q): Query<TagHistoryQuery>,
 ) -> Result<Json<Vec<TagHistoryDto>>, axum::http::StatusCode> {
     let limit = q.limit.unwrap_or(500).clamp(1, 5000);
     let offset = q.offset.unwrap_or(0).max(0);
@@ -1426,9 +1433,11 @@ async fn get_tag_history(
             "SELECT ts, site_code, edge_code, tag_code, value_json, quality_status
              FROM telemetry_ingest_events
              WHERE tag_code = $1
+               AND ($4::timestamptz IS NULL OR ts >= $4)
+               AND ($5::timestamptz IS NULL OR ts <= $5)
              ORDER BY ts DESC
              LIMIT $2 OFFSET $3",
-            &[&tag_code, &limit, &offset],
+            &[&tag_code, &limit, &offset, &q.from, &q.to],
         )
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
