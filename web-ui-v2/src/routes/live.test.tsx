@@ -1,15 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import { Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as apiClient from "@/lib/api-client";
 import * as sse from "@/lib/sse";
 import { useOperationalContextStore } from "@/store/context-store";
 import "../lib/i18n";
 
-// live.tsx is a route component (createFileRoute) -- test the underlying LivePage logic via a
-// minimal standalone render matching the pattern already used for other route-adjacent tests
-// in this codebase (see app-shell.test.tsx's router-free RouterProvider setup) is unnecessary
-// here since LivePage itself has no router-specific behavior; import and render it directly.
+// live.tsx is a route component (createFileRoute) with autoCodeSplitting enabled, which wraps
+// component: LivePage in a lazy boundary. Route.options.component! is therefore a lazy component,
+// not the underlying component function, and suspends before the effect runs. We import LivePage
+// directly to bypass this lazy wrapper and test the component logic itself, using a Suspense
+// boundary to handle suspension from useQuery.
 import { LivePage } from "./live";
 
 describe("Live page SSE patching", () => {
@@ -30,30 +32,21 @@ describe("Live page SSE patching", () => {
   });
 
   it("subscribes to SSE on mount alongside the existing poll", async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    // Suppress React 19 Suspense warning during render, as the component suspends
-    // while queries load (expected) but the effect still runs and sets up SSE before
-    // the queries complete.
-    const consoleError = vi.spyOn(console, "error").mockImplementation((...args) => {
-      if (args[0]?.toString().includes("suspended inside an `act` scope")) {
-        return;
-      }
-      console.error(...args);
-    });
-    try {
-      render(
-        <QueryClientProvider client={qc}>
+    const qc = new QueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <Suspense fallback={<div>Loading...</div>}>
           <LivePage />
-        </QueryClientProvider>
-      );
-    } finally {
-      consoleError.mockRestore();
-    }
-    // The effect runs during mount even if the component suspends, so subscribeSse
-    // should have been called by now
+        </Suspense>
+      </QueryClientProvider>
+    );
+    // The effect runs during mount. Suspense boundary handles suspension from useQuery,
+    // allowing the effect to set up SSE subscription before queries complete.
     await waitFor(() => {
       expect(sse.subscribeSse).toHaveBeenCalled();
     });
+    // Also verify the device text appears once component finishes loading
+    await screen.findByText("dev-mix-1");
     expect(sseHandler).toBeTypeOf("function");
   });
 });
