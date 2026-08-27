@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { getJson, getAuthHeader, postJson } from "./api-client";
+import { getJson, getAuthHeader, postJson, fetchDevicesCurrent, fetchLines, fetchAreas, fetchCells } from "./api-client";
 
 describe("getAuthHeader", () => {
   it("returns an empty object today (no auth implemented yet)", () => {
@@ -36,5 +36,48 @@ describe("postJson", () => {
   it("throws when the response is not ok, same as getJson", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
     await expect(postJson("/api/edges/reset", {})).rejects.toThrow(/500/);
+  });
+});
+
+describe("fetchDevicesCurrent", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([{ device_code: "dev-1", state: "connected" }]), { status: 200 })));
+  });
+
+  it("calls /api/devices/current with limit and filter", async () => {
+    await fetchDevicesCurrent(50, { site: "plant-a", edge: "edge-mix-1" });
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/devices/current?");
+    expect(url).toContain("limit=50");
+    expect(url).toContain("site=plant-a");
+    expect(url).toContain("edge=edge-mix-1");
+  });
+});
+
+describe("fetchLines / fetchAreas / fetchCells", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([{ code: "line-main", name: "Line Main" }]), { status: 200 })));
+  });
+
+  it("fetchLines calls /api/context/lines with site", async () => {
+    await fetchLines("plant-a");
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/context/lines?");
+    expect(url).toContain("site=plant-a");
+  });
+
+  it("fetchAreas calls /api/context/areas with site and line", async () => {
+    await fetchAreas("plant-a", "line-main");
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/context/areas?");
+    expect(url).toContain("site=plant-a");
+    expect(url).toContain("line=line-main");
+  });
+
+  it("fetchCells calls /api/context/cells with site, line, and area", async () => {
+    await fetchCells("plant-a", "line-main", "area-pack");
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/context/cells?");
+    expect(url).toContain("area=area-pack");
   });
 });

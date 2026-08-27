@@ -73,7 +73,7 @@ export type TagHistory = {
   quality_status: string;
 };
 
-type LiveFilter = { site?: string; line?: string; area?: string; cell?: string; edge?: string };
+export type LiveFilter = { site?: string; line?: string; area?: string; cell?: string; edge?: string };
 
 function toQuery(params: Record<string, string | number | undefined>): string {
   const qs = new URLSearchParams();
@@ -152,4 +152,47 @@ export function postEdgeAction(
       target: meta.target,
     }),
   });
+}
+
+export type DeviceCurrent = {
+  site_code: string;
+  line_code: string | null;
+  area_code: string | null;
+  cell_code: string | null;
+  edge_code: string;
+  device_code: string;
+  connection_id: string | null;
+  state: string;
+  severity: string;
+  reason: string | null;
+  tags_connected: number;
+  tags_stale: number;
+  tags_disconnected: number;
+  last_change_at: string;
+  last_seen_at: string;
+};
+
+export function fetchDevicesCurrent(limit = 200, filter?: LiveFilter): Promise<DeviceCurrent[]> {
+  const qs = toQuery({ limit, ...filter });
+  return getJson<DeviceCurrent[]>(`/api/devices/current?${qs}`);
+}
+
+export type ContextOption = {
+  code: string;
+  name: string;
+};
+
+export function fetchLines(site?: string): Promise<ContextOption[]> {
+  const qs = toQuery({ site });
+  return getJson<ContextOption[]>(`/api/context/lines?${qs}`);
+}
+
+export function fetchAreas(site?: string, line?: string): Promise<ContextOption[]> {
+  const qs = toQuery({ site, line });
+  return getJson<ContextOption[]>(`/api/context/areas?${qs}`);
+}
+
+export function fetchCells(site?: string, line?: string, area?: string): Promise<ContextOption[]> {
+  const qs = toQuery({ site, line, area });
+  return getJson<ContextOption[]>(`/api/context/cells?${qs}`);
 }

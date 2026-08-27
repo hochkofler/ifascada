@@ -1,12 +1,18 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { EdgeDiagnosticsPanel } from "./edge-diagnostics-panel";
 import * as edgeActions from "@/lib/edge-actions";
 import * as apiClient from "@/lib/api-client";
+import * as sse from "@/lib/sse";
 import "../../lib/i18n";
 
 describe("EdgeDiagnosticsPanel reset action", () => {
+  beforeEach(() => {
+    // Mock subscribeSse for all tests in this suite so they don't try to create real EventSource
+    vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
+  });
+
   it("shows confirmed-recovered feedback once last_seen_at actually advances after reset", async () => {
     vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({ accepted: true, topic: "x", request_id: null });
     vi.spyOn(apiClient, "fetchEdgesCurrent")
@@ -87,4 +93,89 @@ describe("EdgeDiagnosticsPanel reset action", () => {
     await waitFor(() => expect(screen.getByText(/error al enviar/i)).toBeInTheDocument(), { timeout: 8000 });
     expect(screen.getByRole("button", { name: /reset/i })).not.toBeDisabled();
   }, 10000);
+});
+
+describe("EdgeDiagnosticsPanel telemetry section", () => {
+  beforeEach(() => {
+    // Mock subscribeSse for all tests in this suite so they don't try to create real EventSource
+    vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
+  });
+
+  it("shows the selected edge's tags with value, quality, and formatted time", async () => {
+    vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([
+      {
+        tag_code: "tag_m1_t001",
+        device_code: "dev-mix-1",
+        edge_code: "edge-mix-1",
+        site_code: "plant-a",
+        ts: "2026-08-26T18:31:13.144564Z",
+        value: 12.5,
+        quality: { status: "Good" },
+      } as never,
+    ]);
+    vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
+    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    expect(await screen.findByText("tag_m1_t001")).toBeInTheDocument();
+    expect(screen.getByText("12.5")).toBeInTheDocument();
+    expect(screen.getByText("Good")).toBeInTheDocument();
+    expect(screen.getByText(/14:31/)).toBeInTheDocument(); // formatServerTime, America/La_Paz = UTC-4
+  });
+
+  it("shows the no-telemetry message when the edge has no tags", async () => {
+    vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([]);
+    vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
+    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    expect(await screen.findByText(/sin tags reportando/i)).toBeInTheDocument();
+  });
+});
+
+describe("EdgeDiagnosticsPanel SSE telemetry patch", () => {
+  it("subscribes to SSE scoped to the selected edge while open", async () => {
+    vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([]);
+    vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
+    const subscribeSpy = vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
+    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    await waitFor(() => {
+      expect(subscribeSpy).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ edge: "edge-mix-1" }));
+    });
+  });
+
+  it("does not subscribe to SSE when the panel is closed", () => {
+    const subscribeSpy = vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
+    // Clear the spy's call history from previous tests in this suite
+    subscribeSpy.mockClear();
+    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open={false} onOpenChange={() => {}} />);
+    expect(subscribeSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("EdgeDiagnosticsPanel SSE load throttling", () => {
+  it("does not call fetchTagsCurrent more than once per second even under a burst of SSE events", async () => {
+    vi.useFakeTimers();
+    const fetchTagsSpy = vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([]);
+    vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
+    let sseHandler: (() => void) | undefined;
+    vi.spyOn(sse, "subscribeSse").mockImplementation((onMessage) => {
+      sseHandler = onMessage as () => void;
+      return () => {};
+    });
+    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    await vi.waitFor(() => expect(sseHandler).toBeTypeOf("function"));
+    fetchTagsSpy.mockClear(); // clear the initial on-open load() call
+
+    // Simulate a burst of ~25ms-apart SSE events over 3 seconds, matching the real
+    // edge-sim telemetry rate this finding was based on.
+    for (let elapsedMs = 0; elapsedMs < 3000; elapsedMs += 25) {
+      sseHandler!();
+      await vi.advanceTimersByTimeAsync(25);
+    }
+
+    // A once-per-second throttle allows at most ~3-4 SSE-triggered load() calls over
+    // 3 seconds, not the ~120 a call-per-event implementation would produce. (The
+    // existing 2.5s poll's own load() calls are separate and not being counted against
+    // this cap -- this test's burst duration is short enough that at most 1-2 of those
+    // land too, so a generous cap of 8 avoids coupling this test to poll-vs-throttle timing.)
+    expect(fetchTagsSpy.mock.calls.length).toBeLessThanOrEqual(8);
+    vi.useRealTimers();
+  });
 });
