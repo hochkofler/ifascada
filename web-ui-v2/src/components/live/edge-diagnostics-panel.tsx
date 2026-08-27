@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { resetEdge } from "@/lib/edge-actions";
 import { fetchEdgesCurrent, fetchEdgeEvents, fetchTagsCurrent, type OpsEvent, type TagCurrent } from "@/lib/api-client";
 import { subscribeSse } from "@/lib/sse";
-import { formatServerTime } from "@/lib/datetime";
+import { formatServerDateTime, formatServerTime } from "@/lib/datetime";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 
@@ -82,16 +82,18 @@ export function EdgeDiagnosticsPanel({
     };
     load();
     const interval = setInterval(load, 2500);
-    const lastSseLoadAtRef = { current: 0 };
+    const lastSseLoadAt = { current: 0 };
     const unsubscribeSse = subscribeSse(() => {
       // Throttle to at most one SSE-triggered load per second -- without this, a
       // continuous per-edge telemetry stream (the real edge-sim fleet publishes
       // roughly one event every 25ms per edge across its 5 tags) calls load() on
-      // every single message, far exceeding the existing 2.5s poll and contributing
-      // to the rate-limit exhaustion confirmed live during Task 9 verification.
+      // every single message, far exceeding the existing 2.5s poll and adding to the
+      // refetch storm that competes with the long-lived SSE EventSource connections for
+      // the browser's small per-origin HTTP/1.1 connection pool (confirmed live during
+      // Task 9 verification, producing failed/stuck requests and an empty grid).
       const now = Date.now();
-      if (now - lastSseLoadAtRef.current < 1000) return;
-      lastSseLoadAtRef.current = now;
+      if (now - lastSseLoadAt.current < 1000) return;
+      lastSseLoadAt.current = now;
       load();
     }, { edge: edgeCode, excludeRaw: true });
     return () => {
@@ -197,8 +199,8 @@ export function EdgeDiagnosticsPanel({
           <ul className="flex flex-col gap-1 overflow-y-auto text-xs">
             {events.map((e) => (
               <li key={e.id} className="border-b py-1 font-mono">
-                <span className="text-muted-foreground">{e.ts}</span> [{e.severity}] {e.event_type} -{" "}
-                {e.message}
+                <span className="text-muted-foreground">{formatServerDateTime(e.ts)}</span> [{e.severity}]{" "}
+                {e.event_type} - {e.message}
               </li>
             ))}
           </ul>

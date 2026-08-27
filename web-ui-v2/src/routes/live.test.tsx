@@ -1,18 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { Suspense } from "react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as apiClient from "@/lib/api-client";
 import * as sse from "@/lib/sse";
 import { useOperationalContextStore } from "@/store/context-store";
 import "../lib/i18n";
 
-// live.tsx is a route component (createFileRoute) with autoCodeSplitting enabled, which wraps
-// component: LivePage in a lazy boundary. Route.options.component! is therefore a lazy component,
-// not the underlying component function, and suspends before the effect runs. We import LivePage
-// directly to bypass this lazy wrapper and test the component logic itself, using a Suspense
-// boundary to handle suspension from useQuery.
-import { LivePage } from "./live";
+// LivePage lives in components/live/live-page.tsx (not routes/live.tsx, which is just the
+// createFileRoute wiring) so that TanStack Router's autoCodeSplitting can code-split the
+// route without a named `LivePage` export defeating it. Importing it directly from its real
+// module here means this test exercises the same component the app renders, with no lazy-route
+// boundary to work around.
+import { LivePage } from "@/components/live/live-page";
 
 describe("Live page SSE patching", () => {
   let sseHandler: ((evt: sse.RtEvent) => void) | undefined;
@@ -35,13 +35,10 @@ describe("Live page SSE patching", () => {
     const qc = new QueryClient();
     render(
       <QueryClientProvider client={qc}>
-        <Suspense fallback={<div>Loading...</div>}>
-          <LivePage />
-        </Suspense>
+        <LivePage />
       </QueryClientProvider>
     );
-    // The effect runs during mount. Suspense boundary handles suspension from useQuery,
-    // allowing the effect to set up SSE subscription before queries complete.
+    // The effect runs during mount, before the queries resolve.
     await waitFor(() => {
       expect(sse.subscribeSse).toHaveBeenCalled();
     });
@@ -52,6 +49,10 @@ describe("Live page SSE patching", () => {
 });
 
 describe("Live page SSE refetch throttling", () => {
+  beforeEach(() => {
+    useOperationalContextStore.setState({ site: "plant-a", line: "", area: "", cell: "", edge: "" });
+  });
+
   it("does not invalidate queries more than once per second even under a burst of SSE events", async () => {
     vi.useFakeTimers();
     let sseHandler: ((evt: sse.RtEvent) => void) | undefined;
@@ -65,9 +66,7 @@ describe("Live page SSE refetch throttling", () => {
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
     render(
       <QueryClientProvider client={qc}>
-        <Suspense fallback={<div>Loading...</div>}>
-          <LivePage />
-        </Suspense>
+        <LivePage />
       </QueryClientProvider>
     );
     await vi.waitFor(() => expect(sseHandler).toBeTypeOf("function"));
@@ -84,5 +83,35 @@ describe("Live page SSE refetch throttling", () => {
     // a 120ms-tick-driven invalidation would produce.
     expect(invalidateSpy.mock.calls.length).toBeLessThanOrEqual(8);
     vi.useRealTimers();
+  });
+});
+
+describe("Live page edges with no matching devices", () => {
+  beforeEach(() => {
+    useOperationalContextStore.setState({ site: "plant-a", line: "", area: "", cell: "", edge: "" });
+    vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
+    vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([]);
+    vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
+  });
+
+  it("renders an edge with zero devices and opens its diagnostics panel on click", async () => {
+    vi.spyOn(apiClient, "fetchEdgesCurrent").mockResolvedValue([
+      { edge_code: "edge-silent-1", site_code: "plant-a", status: "online", last_seen_at: new Date().toISOString() } as never,
+    ]);
+    vi.spyOn(apiClient, "fetchDevicesCurrent").mockResolvedValue([]);
+    const qc = new QueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <LivePage />
+      </QueryClientProvider>
+    );
+
+    const row = await screen.findByText("edge-silent-1");
+    await userEvent.click(row);
+
+    // The diagnostics panel (with its Reset button) must be reachable for an edge that has
+    // no device rows to click through -- otherwise Reset is unreachable for exactly the edges
+    // that need it most (an edge that stopped reporting entirely).
+    expect(await screen.findByRole("button", { name: /reset/i })).toBeInTheDocument();
   });
 });
