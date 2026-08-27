@@ -16,6 +16,9 @@ export const en = {
     noData: "No tags for the current context",
     edgesCardTitle: "Edges",
     qualityUnknown: "Unknown",
+    devicesCardTitle: "Devices",
+    lastSeen: "Last seen",
+    noDevices: "No devices reporting",
     diagnostics: {
       reset: "Reset",
       sent: "Command sent, waiting for edge confirmation...",

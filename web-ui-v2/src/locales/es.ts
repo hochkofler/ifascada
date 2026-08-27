@@ -16,6 +16,9 @@ export const es = {
     noData: "Sin tags para el contexto actual",
     edgesCardTitle: "Edges",
     qualityUnknown: "Desconocido",
+    devicesCardTitle: "Dispositivos",
+    lastSeen: "Última vez visto",
+    noDevices: "Sin dispositivos reportando",
     diagnostics: {
       reset: "Reset",
       sent: "Comando enviado, esperando confirmación del edge...",

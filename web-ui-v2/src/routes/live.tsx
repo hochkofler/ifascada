@@ -1,51 +1,37 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchEdgesCurrent, fetchTagsCurrent, type EdgeCurrent, type TagCurrent } from "@/lib/api-client";
+import { fetchEdgesCurrent, fetchDevicesCurrent, type EdgeCurrent, type DeviceCurrent } from "@/lib/api-client";
 import { useOperationalContextStore } from "@/store/context-store";
+import { edgeConnected, lampFromDeviceState } from "@/lib/connectivity";
+import { formatServerDateTime } from "@/lib/datetime";
 import { ContextBar } from "@/components/context-bar";
 import { EdgesOnlineBadge } from "@/components/live/edges-online-badge";
 import { EdgeDiagnosticsPanel } from "@/components/live/edge-diagnostics-panel";
+import { ConnectivityDot } from "@/components/live/connectivity-dot";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { useTranslation } from "react-i18next";
-
-// Mirrors EdgesOnlineBadge's own online-status formula (see that component's doc comment,
-// verified against postgres.rs's edge_current_state upsert): anything not "online" is treated
-// as disconnected/stale for the purpose of offering diagnostics.
-const ONLINE_STATUSES = new Set(["online"]);
-
-function isEdgeDisconnected(edge: EdgeCurrent): boolean {
-  return !ONLINE_STATUSES.has(String(edge.status || "").toLowerCase());
-}
 
 export const Route = createFileRoute("/live")({
   component: LivePage,
 });
 
-type DeviceGroup = {
+type DeviceRow = {
   key: string;
-  deviceCode: string;
-  edgeCode: string;
-  tags: TagCurrent[];
+  device: DeviceCurrent;
+  edge: EdgeCurrent | undefined;
+  lamp: "good" | "warn" | "bad";
 };
 
-function groupTagsByDevice(tags: TagCurrent[]): DeviceGroup[] {
-  const m = new Map<string, DeviceGroup>();
-  for (const t of tags) {
-    const key = `${t.site_code}|${t.line_code ?? "-"}|${t.area_code ?? "-"}|${t.cell_code ?? "-"}|${t.device_code}`;
-    if (!m.has(key)) {
-      m.set(key, { key, deviceCode: t.device_code, edgeCode: t.edge_code, tags: [] });
-    }
-    m.get(key)!.tags.push(t);
-  }
-  return Array.from(m.values()).sort((a, b) => a.deviceCode.localeCompare(b.deviceCode));
-}
-
-function formatValue(value: unknown): string {
-  if (value === null || value === undefined) return "-";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+function buildDeviceRows(devices: DeviceCurrent[], edges: EdgeCurrent[]): DeviceRow[] {
+  const edgeByCode = new Map(edges.map((e) => [e.edge_code, e]));
+  return devices
+    .map((d) => {
+      const edge = edgeByCode.get(d.edge_code);
+      const conn = edgeConnected(edge);
+      return { key: `${d.edge_code}|${d.device_code}`, device: d, edge, lamp: lampFromDeviceState(d, conn) };
+    })
+    .sort((a, b) => a.device.device_code.localeCompare(b.device.device_code));
 }
 
 function LivePage() {
@@ -58,18 +44,21 @@ function LivePage() {
     cell: cell || undefined,
     edge: edge || undefined,
   };
-  const edges = useQuery({
+  const edgesQuery = useQuery({
     queryKey: ["live-edges", filter],
     queryFn: () => fetchEdgesCurrent(200, filter),
     refetchInterval: 2500,
   });
-  const tags = useQuery({
-    queryKey: ["live-tags", filter],
-    queryFn: () => fetchTagsCurrent(1000, filter),
+  const devicesQuery = useQuery({
+    queryKey: ["live-devices", filter],
+    queryFn: () => fetchDevicesCurrent(1000, filter),
     refetchInterval: 2500,
   });
 
-  const groups = useMemo(() => groupTagsByDevice(tags.data ?? []), [tags.data]);
+  const rows = useMemo(
+    () => buildDeviceRows(devicesQuery.data ?? [], edgesQuery.data ?? []),
+    [devicesQuery.data, edgesQuery.data]
+  );
 
   const [diagnosticsEdge, setDiagnosticsEdge] = useState<{ edgeCode: string; site: string } | null>(null);
 
@@ -77,76 +66,39 @@ function LivePage() {
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-4">
         <ContextBar />
-        <EdgesOnlineBadge edges={edges.data ?? []} />
+        <EdgesOnlineBadge edges={edgesQuery.data ?? []} />
       </div>
       <h1 className="text-lg font-semibold">{t("live.title")}</h1>
-      {(edges.data ?? []).length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">{t("live.edgesCardTitle")}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1">
-            {(edges.data ?? []).map((e) => {
-              const disconnected = isEdgeDisconnected(e);
-              return (
-                <div
-                  key={`${e.site_code}|${e.edge_code}`}
-                  role={disconnected ? "button" : undefined}
-                  tabIndex={disconnected ? 0 : undefined}
-                  onClick={
-                    disconnected
-                      ? () => setDiagnosticsEdge({ edgeCode: e.edge_code, site: e.site_code })
-                      : undefined
-                  }
-                  onKeyDown={
-                    disconnected
-                      ? (ev) => {
-                          if (ev.key === "Enter" || ev.key === " ") {
-                            ev.preventDefault();
-                            setDiagnosticsEdge({ edgeCode: e.edge_code, site: e.site_code });
-                          }
-                        }
-                      : undefined
-                  }
-                  className={`flex items-center justify-between gap-2 rounded px-2 py-1 font-mono text-xs ${
-                    disconnected ? "cursor-pointer hover:bg-accent" : ""
-                  }`}
-                >
-                  <span>{e.edge_code}</span>
-                  <span className="text-muted-foreground">{e.last_seen_at ?? "-"}</span>
-                  <Badge variant={disconnected ? "destructive" : "default"}>{e.status}</Badge>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      )}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {groups.map((g) => (
-          <Card key={g.key}>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between gap-2 font-mono text-sm">
-                <span>{g.deviceCode}</span>
-                <span className="text-xs text-muted-foreground">{g.edgeCode}</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1">
-              {g.tags.map((tg) => (
-                <div key={tg.tag_code} className="flex items-center justify-between gap-2 font-mono text-xs">
-                  <span className="truncate">{tg.tag_code}</span>
-                  <span className="truncate" title={formatValue(tg.value)}>
-                    {formatValue(tg.value)}
-                  </span>
-                  <Badge variant={String(tg.quality?.status ?? "").toLowerCase() === "good" ? "default" : "outline"}>
-                    {tg.quality?.status ?? t("live.qualityUnknown")}
-                  </Badge>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        ))}
-        {groups.length === 0 && <p className="text-sm text-muted-foreground">{t("live.noData")}</p>}
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">{t("live.devicesCardTitle")}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-1">
+          {rows.map((r) => (
+            <div
+              key={r.key}
+              role="button"
+              tabIndex={0}
+              onClick={() => setDiagnosticsEdge({ edgeCode: r.device.edge_code, site: r.device.site_code })}
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter" || ev.key === " ") {
+                  ev.preventDefault();
+                  setDiagnosticsEdge({ edgeCode: r.device.edge_code, site: r.device.site_code });
+                }
+              }}
+              className="flex cursor-pointer items-center gap-3 rounded px-2 py-1 font-mono text-xs hover:bg-accent"
+            >
+              <ConnectivityDot state={r.lamp} title={`device_state: ${r.device.state || "unknown"}`} />
+              <span className="min-w-0 flex-1 truncate">{r.device.device_code}</span>
+              <span className="text-muted-foreground">{r.device.edge_code}</span>
+              <span className="text-muted-foreground">
+                {r.device.last_seen_at ? formatServerDateTime(r.device.last_seen_at) : "-"}
+              </span>
+            </div>
+          ))}
+          {rows.length === 0 && <p className="text-sm text-muted-foreground">{t("live.noDevices")}</p>}
+        </CardContent>
+      </Card>
       {diagnosticsEdge && (
         <EdgeDiagnosticsPanel
           edgeCode={diagnosticsEdge.edgeCode}
