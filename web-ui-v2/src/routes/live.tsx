@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState, useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { subscribeSse, type RtEvent } from "@/lib/sse";
 import { fetchEdgesCurrent, fetchDevicesCurrent, type EdgeCurrent, type DeviceCurrent } from "@/lib/api-client";
 import { useOperationalContextStore } from "@/store/context-store";
 import { edgeConnected, lampFromDeviceState } from "@/lib/connectivity";
@@ -34,7 +35,7 @@ function buildDeviceRows(devices: DeviceCurrent[], edges: EdgeCurrent[]): Device
     .sort((a, b) => a.device.device_code.localeCompare(b.device.device_code));
 }
 
-function LivePage() {
+export function LivePage() {
   const { t } = useTranslation();
   const { site, line, area, cell, edge } = useOperationalContextStore();
   const filter = {
@@ -54,6 +55,38 @@ function LivePage() {
     queryFn: () => fetchDevicesCurrent(1000, filter),
     refetchInterval: 2500,
   });
+
+  const queryClient = useQueryClient();
+  const pendingRef = useRef<Map<string, RtEvent>>(new Map());
+
+  useEffect(() => {
+    const unsubscribe = subscribeSse(
+      (evt) => {
+        const payload = evt.payload as { tag_id?: string; device_id?: string } | undefined;
+        const key = payload?.device_id ?? payload?.tag_id;
+        if (!key) return;
+        pendingRef.current.set(key, evt);
+      },
+      { site, line: line || undefined, area: area || undefined, cell: cell || undefined, edge: edge || undefined, excludeRaw: true }
+    );
+    const flush = setInterval(() => {
+      if (pendingRef.current.size === 0) return;
+      pendingRef.current.clear();
+      // A real-time nudge: invalidate so the next poll tick (already running every 2.5s) fires
+      // sooner instead of waiting out the full interval. This deliberately does NOT hand-patch
+      // individual device/edge objects in the cache -- reusing the same fetchDevicesCurrent/
+      // fetchEdgesCurrent path that already normalizes and shapes this data keeps there being
+      // exactly one code path that produces what the grid renders, matching the spec's "poll
+      // stays authoritative" decision instead of maintaining a second, divergence-prone copy.
+      queryClient.invalidateQueries({ queryKey: ["live-edges", filter] });
+      queryClient.invalidateQueries({ queryKey: ["live-devices", filter] });
+    }, 120);
+    return () => {
+      clearInterval(flush);
+      unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [site, line, area, cell, edge]);
 
   const rows = useMemo(
     () => buildDeviceRows(devicesQuery.data ?? [], edgesQuery.data ?? []),

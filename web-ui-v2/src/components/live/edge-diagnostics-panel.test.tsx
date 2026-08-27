@@ -4,9 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { EdgeDiagnosticsPanel } from "./edge-diagnostics-panel";
 import * as edgeActions from "@/lib/edge-actions";
 import * as apiClient from "@/lib/api-client";
+import * as sse from "@/lib/sse";
 import "../../lib/i18n";
 
 describe("EdgeDiagnosticsPanel reset action", () => {
+  beforeEach(() => {
+    // Mock subscribeSse for all tests in this suite so they don't try to create real EventSource
+    vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
+  });
+
   it("shows confirmed-recovered feedback once last_seen_at actually advances after reset", async () => {
     vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({ accepted: true, topic: "x", request_id: null });
     vi.spyOn(apiClient, "fetchEdgesCurrent")
@@ -90,6 +96,11 @@ describe("EdgeDiagnosticsPanel reset action", () => {
 });
 
 describe("EdgeDiagnosticsPanel telemetry section", () => {
+  beforeEach(() => {
+    // Mock subscribeSse for all tests in this suite so they don't try to create real EventSource
+    vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
+  });
+
   it("shows the selected edge's tags with value, quality, and formatted time", async () => {
     vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([
       {
@@ -115,5 +126,25 @@ describe("EdgeDiagnosticsPanel telemetry section", () => {
     vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
     render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
     expect(await screen.findByText(/sin tags reportando/i)).toBeInTheDocument();
+  });
+});
+
+describe("EdgeDiagnosticsPanel SSE telemetry patch", () => {
+  it("subscribes to SSE scoped to the selected edge while open", async () => {
+    vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([]);
+    vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
+    const subscribeSpy = vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
+    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    await waitFor(() => {
+      expect(subscribeSpy).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ edge: "edge-mix-1" }));
+    });
+  });
+
+  it("does not subscribe to SSE when the panel is closed", () => {
+    const subscribeSpy = vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
+    // Clear the spy's call history from previous tests in this suite
+    subscribeSpy.mockClear();
+    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open={false} onOpenChange={() => {}} />);
+    expect(subscribeSpy).not.toHaveBeenCalled();
   });
 });

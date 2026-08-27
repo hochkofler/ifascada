@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { resetEdge } from "@/lib/edge-actions";
 import { fetchEdgesCurrent, fetchEdgeEvents, fetchTagsCurrent, type OpsEvent, type TagCurrent } from "@/lib/api-client";
+import { subscribeSse } from "@/lib/sse";
 import { formatServerTime } from "@/lib/datetime";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -72,20 +73,20 @@ export function EdgeDiagnosticsPanel({
     if (!open) return;
     let cancelled = false;
     const load = () => {
-      fetchTagsCurrent(200, { edge: edgeCode })
-        .then((data) => {
-          if (!cancelled) setTags(data);
-        })
-        .catch(() => {
-          // Telemetry fetch failures don't block the rest of the panel (reset, events) --
-          // an empty list just falls through to the "no telemetry" empty state.
-        });
+      fetchTagsCurrent(200, { edge: edgeCode }).then((data) => {
+        if (!cancelled) setTags(data);
+      }).catch(() => {
+        // Telemetry fetch failures don't block the rest of the panel (reset, events) --
+        // an empty list just falls through to the "no telemetry" empty state.
+      });
     };
     load();
     const interval = setInterval(load, 2500);
+    const unsubscribeSse = subscribeSse(() => load(), { edge: edgeCode, excludeRaw: true });
     return () => {
       cancelled = true;
       clearInterval(interval);
+      unsubscribeSse();
     };
   }, [open, edgeCode]);
 
