@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { getJson, getAuthHeader, postJson, fetchDevicesCurrent, fetchLines, fetchAreas, fetchCells } from "./api-client";
+import {
+  getJson,
+  getAuthHeader,
+  postJson,
+  fetchDevicesCurrent,
+  fetchLines,
+  fetchAreas,
+  fetchCells,
+} from "./api-client";
 
 describe("getAuthHeader", () => {
   it("returns an empty object today (no auth implemented yet)", () => {
@@ -9,7 +17,10 @@ describe("getAuthHeader", () => {
 
 describe("getJson", () => {
   beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    );
   });
 
   it("calls fetch with the auth header spread into request headers", async () => {
@@ -21,7 +32,10 @@ describe("getJson", () => {
 
 describe("postJson", () => {
   beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    );
   });
 
   it("POSTs a JSON body with the auth header spread into request headers", async () => {
@@ -34,14 +48,48 @@ describe("postJson", () => {
   });
 
   it("throws when the response is not ok, same as getJson", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 500 }))
+    );
     await expect(postJson("/api/edges/reset", {})).rejects.toThrow(/500/);
   });
 });
 
+/** Forma completa de `DeviceCurrentDto` (crates/central-server/src/api.rs). El stub anterior era
+ *  parcial: pasaba solo porque la respuesta se casteaba sin validar. */
+const deviceCurrentPayload = {
+  site_code: "plant-a",
+  line_code: null,
+  area_code: null,
+  cell_code: null,
+  edge_code: "edge-mix-1",
+  device_code: "dev-1",
+  connection_id: null,
+  state: "connected",
+  severity: "info",
+  reason: null,
+  tags_connected: 1,
+  tags_stale: 0,
+  tags_disconnected: 0,
+  last_change_at: "2026-08-26T18:31:13Z",
+  last_seen_at: "2026-08-26T18:31:13Z",
+};
+
 describe("fetchDevicesCurrent", () => {
   beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([{ device_code: "dev-1", state: "connected" }]), { status: 200 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify([deviceCurrentPayload]), { status: 200 }))
+    );
+  });
+
+  it("rechaza una respuesta que no cumple el contrato del backend", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify([{ device_code: "dev-1" }]), { status: 200 }))
+    );
+    await expect(fetchDevicesCurrent(10)).rejects.toThrow();
   });
 
   it("calls /api/devices/current with limit and filter", async () => {
@@ -56,7 +104,13 @@ describe("fetchDevicesCurrent", () => {
 
 describe("fetchLines / fetchAreas / fetchCells", () => {
   beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([{ code: "line-main", name: "Line Main" }]), { status: 200 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify([{ code: "line-main", name: "Line Main" }]), { status: 200 })
+      )
+    );
   });
 
   it("fetchLines calls /api/context/lines with site", async () => {

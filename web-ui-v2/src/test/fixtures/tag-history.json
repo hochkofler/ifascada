@@ -1,0 +1,26 @@
+[
+    {
+        "ts": "2026-08-27T18:59:47.730469Z",
+        "site_code": "plant-a",
+        "edge_code": "edge-pack-2",
+        "tag_code": "tag_p2_t005",
+        "value": 0.0,
+        "quality_status": "Good"
+    },
+    {
+        "ts": "2026-08-27T18:59:47.050719Z",
+        "site_code": "plant-a",
+        "edge_code": "edge-pack-2",
+        "tag_code": "tag_p2_t005",
+        "value": 1.0,
+        "quality_status": "Good"
+    },
+    {
+        "ts": "2026-08-27T18:59:46.427245Z",
+        "site_code": "plant-a",
+        "edge_code": "edge-pack-2",
+        "tag_code": "tag_p2_t005",
+        "value": 6.0,
+        "quality_status": "Good"
+    }
+]

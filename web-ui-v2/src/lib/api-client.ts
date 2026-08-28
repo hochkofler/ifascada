@@ -1,3 +1,28 @@
+import { z } from "zod";
+import { ApiError } from "@/lib/api-error";
+import {
+  contextOptionSchema,
+  deviceCurrentSchema,
+  edgeCurrentSchema,
+  opsEventSchema,
+  tagCurrentSchema,
+  tagHistorySchema,
+} from "@/lib/api-schemas";
+
+/**
+ * Los tipos de las respuestas ya no se escriben a mano aca: se infieren de los esquemas de
+ * api-schemas.ts, que a su vez estan derivados de los DTO de crates/central-server/src/api.rs.
+ * Una sola fuente de verdad, y validacion real en el borde en vez de `res.json() as Promise<T>`.
+ */
+export type {
+  TagCurrent,
+  EdgeCurrent,
+  DeviceCurrent,
+  TagHistory,
+  OpsEvent,
+  ContextOption,
+} from "@/lib/api-schemas";
+
 /**
  * Single point where an Authorization header would be added once real auth exists
  * (see the spec's "Auth: door left open" section). Empty today.
@@ -12,13 +37,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { ...getAuthHeader(), ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
-    throw new Error(`${init?.method ?? "GET"} ${path} failed: ${res.status}`);
+    // ApiError en vez de un Error generico: lleva `status` y `body`, que es lo que
+    // notify.apiError() necesita para mostrarle al operador un motivo legible en vez de la
+    // palabra "error", y de donde saldra el correlationId cuando el backend lo emita.
+    const body = await res.text().catch(() => "");
+    throw new ApiError(res.status, body || `${init?.method ?? "GET"} ${path}`);
   }
   return res.json() as Promise<T>;
 }
 
 export function getJson<T>(path: string): Promise<T> {
   return request<T>(path);
+}
+
+/**
+ * GET + validacion contra un esquema. Toda lectura tipada pasa por aca; `getJson` queda como
+ * escotilla cruda para lo que todavia no tiene esquema.
+ */
+async function getParsed<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+  return schema.parse(await request<unknown>(path));
 }
 
 /**
@@ -34,46 +71,13 @@ export function postJson<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
-export type TagCurrent = {
-  tag_code: string;
-  device_code: string;
-  site_code: string;
-  line_code: string | null;
-  area_code: string | null;
-  cell_code: string | null;
-  edge_code: string;
-  ts: string;
-  value: unknown;
-  quality: { status?: string; reason?: string };
-  source: string;
-  metadata_json?: Record<string, unknown>;
-  tag_status?: string;
-  expected_interval_ms?: number | null;
+export type LiveFilter = {
+  site?: string;
+  line?: string;
+  area?: string;
+  cell?: string;
+  edge?: string;
 };
-
-export type EdgeCurrent = {
-  site_code: string;
-  line_code: string | null;
-  area_code: string | null;
-  cell_code: string | null;
-  edge_code: string;
-  status: string;
-  last_seen_at: string;
-  outbox_depth: number;
-  outbox_oldest_secs: number | null;
-  action_metrics: Record<string, unknown>;
-};
-
-export type TagHistory = {
-  ts: string;
-  site_code: string;
-  edge_code: string;
-  tag_code: string;
-  value: unknown;
-  quality_status: string;
-};
-
-export type LiveFilter = { site?: string; line?: string; area?: string; cell?: string; edge?: string };
 
 function toQuery(params: Record<string, string | number | undefined>): string {
   const qs = new URLSearchParams();
@@ -83,45 +87,35 @@ function toQuery(params: Record<string, string | number | undefined>): string {
   return qs.toString();
 }
 
-export function fetchTagsCurrent(limit = 200, filter?: LiveFilter): Promise<TagCurrent[]> {
+export function fetchTagsCurrent(limit = 200, filter?: LiveFilter) {
   const qs = toQuery({ limit, ...filter });
-  return getJson<TagCurrent[]>(`/api/tags/current?${qs}`);
+  return getParsed(`/api/tags/current?${qs}`, z.array(tagCurrentSchema));
 }
 
-export function fetchEdgesCurrent(limit = 200, filter?: LiveFilter): Promise<EdgeCurrent[]> {
+export function fetchEdgesCurrent(limit = 200, filter?: LiveFilter) {
   const qs = toQuery({ limit, ...filter });
-  return getJson<EdgeCurrent[]>(`/api/edges/current?${qs}`);
+  return getParsed(`/api/edges/current?${qs}`, z.array(edgeCurrentSchema));
 }
 
-export function fetchTagHistory(tagCode: string, limit = 200, offset = 0): Promise<TagHistory[]> {
-  return getJson<TagHistory[]>(`/api/tags/${encodeURIComponent(tagCode)}/history?limit=${limit}&offset=${offset}`);
+export function fetchTagHistory(tagCode: string, limit = 200, offset = 0) {
+  return getParsed(
+    `/api/tags/${encodeURIComponent(tagCode)}/history?limit=${limit}&offset=${offset}`,
+    z.array(tagHistorySchema)
+  );
 }
-
-export type OpsEvent = {
-  id: number;
-  ts: string;
-  severity: string;
-  event_type: string;
-  site_code: string;
-  edge_code?: string | null;
-  connection_id?: string | null;
-  device_code?: string | null;
-  tag_code?: string | null;
-  config_hash?: string | null;
-  op_id?: string | null;
-  message: string;
-  payload_json?: Record<string, unknown>;
-};
 
 /**
  * Real route: `GET /api/ops/events?edge={edge_code}&limit=N` -- see
  * crates/central-server/src/api.rs's `list_operational_events` handler (registered as
  * `.route("/api/ops/events", get(list_operational_events))`), which serializes rows into
- * `OperationalEventDto` (api.rs:116-130) whose fields match `OpsEvent` above exactly. Confirmed
- * live and field-matched against that DTO by Task 13's review.
+ * `OperationalEventDto` (api.rs:116-130). Confirmed live and field-matched against that DTO by
+ * Task 13's review; el esquema de api-schemas.ts esta derivado de ese mismo DTO.
  */
-export function fetchEdgeEvents(edgeCode: string, limit = 20): Promise<OpsEvent[]> {
-  return getJson<OpsEvent[]>(`/api/ops/events?edge=${encodeURIComponent(edgeCode)}&limit=${limit}`);
+export function fetchEdgeEvents(edgeCode: string, limit = 20) {
+  return getParsed(
+    `/api/ops/events?edge=${encodeURIComponent(edgeCode)}&limit=${limit}`,
+    z.array(opsEventSchema)
+  );
 }
 
 /**
@@ -154,45 +148,22 @@ export function postEdgeAction(
   });
 }
 
-export type DeviceCurrent = {
-  site_code: string;
-  line_code: string | null;
-  area_code: string | null;
-  cell_code: string | null;
-  edge_code: string;
-  device_code: string;
-  connection_id: string | null;
-  state: string;
-  severity: string;
-  reason: string | null;
-  tags_connected: number;
-  tags_stale: number;
-  tags_disconnected: number;
-  last_change_at: string;
-  last_seen_at: string;
-};
-
-export function fetchDevicesCurrent(limit = 200, filter?: LiveFilter): Promise<DeviceCurrent[]> {
+export function fetchDevicesCurrent(limit = 200, filter?: LiveFilter) {
   const qs = toQuery({ limit, ...filter });
-  return getJson<DeviceCurrent[]>(`/api/devices/current?${qs}`);
+  return getParsed(`/api/devices/current?${qs}`, z.array(deviceCurrentSchema));
 }
 
-export type ContextOption = {
-  code: string;
-  name: string;
-};
-
-export function fetchLines(site?: string): Promise<ContextOption[]> {
+export function fetchLines(site?: string) {
   const qs = toQuery({ site });
-  return getJson<ContextOption[]>(`/api/context/lines?${qs}`);
+  return getParsed(`/api/context/lines?${qs}`, z.array(contextOptionSchema));
 }
 
-export function fetchAreas(site?: string, line?: string): Promise<ContextOption[]> {
+export function fetchAreas(site?: string, line?: string) {
   const qs = toQuery({ site, line });
-  return getJson<ContextOption[]>(`/api/context/areas?${qs}`);
+  return getParsed(`/api/context/areas?${qs}`, z.array(contextOptionSchema));
 }
 
-export function fetchCells(site?: string, line?: string, area?: string): Promise<ContextOption[]> {
+export function fetchCells(site?: string, line?: string, area?: string) {
   const qs = toQuery({ site, line, area });
-  return getJson<ContextOption[]>(`/api/context/cells?${qs}`);
+  return getParsed(`/api/context/cells?${qs}`, z.array(contextOptionSchema));
 }

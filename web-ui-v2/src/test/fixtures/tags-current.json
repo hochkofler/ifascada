@@ -1,0 +1,68 @@
+[
+    {
+        "tag_code": "tag_p2_t005",
+        "device_code": "dev-pack-2",
+        "site_code": "plant-a",
+        "line_code": "line-sim",
+        "area_code": "area-pack",
+        "cell_code": "cell-pack-2",
+        "edge_code": "edge-pack-2",
+        "ts": "2026-08-27T18:59:47.730469Z",
+        "value": 0.0,
+        "quality": {
+            "reason": null,
+            "status": "Good"
+        },
+        "source": "edge/edge-pack-2",
+        "metadata_json": {
+            "historian_deadband": 0.2,
+            "historian_max_interval_secs": 60
+        },
+        "expected_interval_ms": null,
+        "tag_status": "disconnected"
+    },
+    {
+        "tag_code": "tag_p2_t004",
+        "device_code": "dev-pack-2",
+        "site_code": "plant-a",
+        "line_code": "line-sim",
+        "area_code": "area-pack",
+        "cell_code": "cell-pack-2",
+        "edge_code": "edge-pack-2",
+        "ts": "2026-08-27T18:59:47.730467Z",
+        "value": 0.0,
+        "quality": {
+            "reason": null,
+            "status": "Good"
+        },
+        "source": "edge/edge-pack-2",
+        "metadata_json": {
+            "historian_deadband": 0.2,
+            "historian_max_interval_secs": 60
+        },
+        "expected_interval_ms": null,
+        "tag_status": "disconnected"
+    },
+    {
+        "tag_code": "tag_p2_t002",
+        "device_code": "dev-pack-2",
+        "site_code": "plant-a",
+        "line_code": "line-sim",
+        "area_code": "area-pack",
+        "cell_code": "cell-pack-2",
+        "edge_code": "edge-pack-2",
+        "ts": "2026-08-27T18:59:47.730465Z",
+        "value": 0.0,
+        "quality": {
+            "reason": null,
+            "status": "Good"
+        },
+        "source": "edge/edge-pack-2",
+        "metadata_json": {
+            "historian_deadband": 0.2,
+            "historian_max_interval_secs": 60
+        },
+        "expected_interval_ms": null,
+        "tag_status": "disconnected"
+    }
+]

@@ -1,0 +1,38 @@
+[
+    {
+        "site_code": "plant-a",
+        "line_code": "line-sim",
+        "area_code": "area-pack",
+        "cell_code": "cell-pack-2",
+        "edge_code": "edge-pack-2",
+        "status": "disconnected",
+        "last_seen_at": "2026-08-27T18:59:47.730469Z",
+        "outbox_depth": 0,
+        "outbox_oldest_secs": null,
+        "action_metrics": {}
+    },
+    {
+        "site_code": "plant-a",
+        "line_code": "line-sim",
+        "area_code": "area-mix",
+        "cell_code": "cell-mix-1",
+        "edge_code": "edge-mix-1",
+        "status": "disconnected",
+        "last_seen_at": "2026-08-27T18:59:26.625152Z",
+        "outbox_depth": 0,
+        "outbox_oldest_secs": null,
+        "action_metrics": {}
+    },
+    {
+        "site_code": "plant-a",
+        "line_code": "line-sim",
+        "area_code": "area-pack",
+        "cell_code": "cell-pack-1",
+        "edge_code": "edge-pack-1",
+        "status": "disconnected",
+        "last_seen_at": "2026-08-27T18:59:26.543719Z",
+        "outbox_depth": 0,
+        "outbox_oldest_secs": null,
+        "action_metrics": {}
+    }
+]
