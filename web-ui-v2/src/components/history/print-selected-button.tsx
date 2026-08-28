@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { postEdgeAction, type TagCurrent } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
+import { notify } from "@/components/notifications";
 import type { HistoryRow } from "./history-columns";
 import { findPrintDeviceCommand, findPrintPersistAction } from "./print-metadata";
 
@@ -24,27 +25,25 @@ export function PrintSelectedButton({
 }) {
   const { t } = useTranslation();
   const [printing, setPrinting] = useState(false);
-  const [message, setMessage] = useState("");
 
   const printCommandPayload = tag ? findPrintDeviceCommand(tag.metadata_json) : null;
   const printPersistAction = tag ? findPrintPersistAction(tag.metadata_json) : null;
 
   async function handlePrint() {
     if (!tag) {
-      setMessage(t("history.noTagSelected"));
+      notify.warning("history.noTagSelected");
       return;
     }
     if (!printCommandPayload) {
-      setMessage(t("history.noPrintAutomation"));
+      notify.warning("history.noPrintAutomation");
       return;
     }
     if (selectedRows.length === 0) {
-      setMessage(t("history.selectAtLeastOneRow"));
+      notify.warning("history.selectAtLeastOneRow");
       return;
     }
 
     setPrinting(true);
-    setMessage("");
     try {
       const selectedItems = [...selectedRows].sort(
         (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()
@@ -77,7 +76,8 @@ export function PrintSelectedButton({
 
       const payload = JSON.parse(JSON.stringify(printCommandPayload)) as Record<string, unknown>;
       const argsRaw = payload.args;
-      const args = argsRaw && typeof argsRaw === "object" ? { ...(argsRaw as Record<string, unknown>) } : {};
+      const args =
+        argsRaw && typeof argsRaw === "object" ? { ...(argsRaw as Record<string, unknown>) } : {};
       args.mode = "from_buffer";
       args.buffer_id = bufferId;
       args.clear_after_print = true;
@@ -111,9 +111,14 @@ export function PrintSelectedButton({
         );
       }
 
-      setMessage(t("history.printCommandSent", { count: selectedItems.length, bufferId }));
-    } catch (e) {
-      setMessage(t("history.printFailed", { error: e instanceof Error ? e.message : String(e) }));
+      notify.success("history.printCommandSent", {
+        params: { count: selectedItems.length, bufferId },
+      });
+    } catch (error) {
+      // Antes esto pintaba el motivo en un <span> gris al lado del boton, que desaparecia al
+      // cambiar de tag. Ahora ademas queda en el log de sesion con el status HTTP que traiga el
+      // ApiError, que es lo que Sistemas necesita cuando la impresora de planta no responde.
+      notify.apiError(error, "history.printFailed", { source: `history.print.${tag.tag_code}` });
     } finally {
       setPrinting(false);
     }
@@ -129,7 +134,6 @@ export function PrintSelectedButton({
       >
         {printing ? "…" : t("history.printSelected")}
       </Button>
-      {message && <span className="text-xs text-muted-foreground">{message}</span>}
     </div>
   );
 }

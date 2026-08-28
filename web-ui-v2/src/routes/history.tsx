@@ -6,11 +6,20 @@ import { fetchTagHistory, fetchTagsCurrent } from "@/lib/api-client";
 import { useOperationalContextStore } from "@/store/context-store";
 import { useAutoSelectFirst } from "@/lib/use-auto-select-first";
 import { numericValue } from "@/lib/value-formatting";
-import { getHistoryColumns, toHistoryRows, type HistoryRow } from "@/components/history/history-columns";
-import { applySelectionClick } from "@/components/history/selection";
+import {
+  getHistoryColumns,
+  toHistoryRows,
+  type HistoryRow,
+} from "@/components/history/history-columns";
 import { PrintSelectedButton } from "@/components/history/print-selected-button";
+import { useHistorySelection } from "@/components/history/use-history-selection";
 import { DataTable } from "@/components/data-table/DataTable";
-import { ColumnDisplayType, type ColumnDefinition, type ServerState, type ServerHandlers } from "@/components/data-table/types";
+import {
+  ColumnDisplayType,
+  type ColumnDefinition,
+  type ServerState,
+  type ServerHandlers,
+} from "@/components/data-table/types";
 import { ContextBar } from "@/components/context-bar";
 import { Input } from "@/components/ui/input";
 
@@ -21,11 +30,8 @@ const HISTORY_FETCH_LIMIT = 2000;
 
 export const Route = createFileRoute("/history")({
   component: HistoryPage,
+  staticData: { breadcrumb: "Histórico" },
 });
-
-function rowKeyOf(row: HistoryRow): string {
-  return row.rowKey;
-}
 
 function HistoryPage() {
   const { t } = useTranslation();
@@ -34,11 +40,18 @@ function HistoryPage() {
   const [minValue, setMinValue] = useState(0);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  const [selected, setSelected] = useState<Map<string, HistoryRow>>(new Map());
-  const [lastClickedKey, setLastClickedKey] = useState<string | null>(null);
 
-  const filter = { site, line: line || undefined, area: area || undefined, cell: cell || undefined, edge: edge || undefined };
-  const tags = useQuery({ queryKey: ["history-tags", filter], queryFn: () => fetchTagsCurrent(500, filter) });
+  const filter = {
+    site,
+    line: line || undefined,
+    area: area || undefined,
+    cell: cell || undefined,
+    edge: edge || undefined,
+  };
+  const tags = useQuery({
+    queryKey: ["history-tags", filter],
+    queryFn: () => fetchTagsCurrent(500, filter),
+  });
   const tagCodes = useMemo(() => (tags.data ?? []).map((tg) => tg.tag_code), [tags.data]);
   useAutoSelectFirst(tagCodes, selectedTag, setSelectedTag);
 
@@ -71,21 +84,13 @@ function HistoryPage() {
     [filteredRows, clampedPage, pageSize]
   );
 
-  // A tag switch invalidates any prior selection (rows from a different tag are meaningless to
-  // keep around); the Value>x filter and pagination must NOT clear it -- that's the whole point
-  // of keying selection by HistoryRow.rowKey instead of by page position (see selection.ts).
-  useEffect(() => {
-    setSelected(new Map());
-    setLastClickedKey(null);
-  }, [selectedTag]);
+  const { selected, lastClickedKey, handleSelectClick } = useHistorySelection(
+    selectedTag,
+    filteredRows
+  );
   useEffect(() => {
     setPage(0);
   }, [selectedTag, minValue, pageSize]);
-
-  function handleSelectClick(row: HistoryRow, shiftKey: boolean) {
-    setSelected((prev) => applySelectionClick(prev, filteredRows, rowKeyOf, row, lastClickedKey, shiftKey));
-    setLastClickedKey(row.rowKey);
-  }
 
   // Prepended to historyColumns. Deliberately NOT the vendored DataTable's native
   // `selectable`/`onSelectionChange` checkbox column -- see selection.ts for why (its
@@ -120,7 +125,13 @@ function HistoryPage() {
     [selected, lastClickedKey, filteredRows, t]
   );
 
-  const serverState: ServerState = { page: clampedPage, pageSize, sorting: [], filters: [], globalFilter: "" };
+  const serverState: ServerState = {
+    page: clampedPage,
+    pageSize,
+    sorting: [],
+    filters: [],
+    globalFilter: "",
+  };
   const serverHandlers: ServerHandlers = {
     onPageChange: setPage,
     onPageSizeChange: (size) => {

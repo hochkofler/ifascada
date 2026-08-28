@@ -1,0 +1,53 @@
+[
+    {
+        "site_code": "plant-a",
+        "line_code": "line-sim",
+        "area_code": "area-pack",
+        "cell_code": "cell-pack-1",
+        "edge_code": "edge-pack-1",
+        "device_code": "dev-pack-1",
+        "connection_id": null,
+        "state": "disconnected",
+        "severity": "error",
+        "reason": "edge_offline_or_stale",
+        "tags_connected": 0,
+        "tags_stale": 0,
+        "tags_disconnected": 5,
+        "last_change_at": "2026-08-27T16:51:43.261298Z",
+        "last_seen_at": "2026-08-27T16:51:43.261298Z"
+    },
+    {
+        "site_code": "plant-a",
+        "line_code": "line-sim",
+        "area_code": "area-pack",
+        "cell_code": "cell-pack-2",
+        "edge_code": "edge-pack-2",
+        "device_code": "dev-pack-2",
+        "connection_id": null,
+        "state": "disconnected",
+        "severity": "error",
+        "reason": "edge_offline_or_stale",
+        "tags_connected": 0,
+        "tags_stale": 0,
+        "tags_disconnected": 5,
+        "last_change_at": "2026-08-27T16:51:43.261298Z",
+        "last_seen_at": "2026-08-27T16:51:43.261298Z"
+    },
+    {
+        "site_code": "plant-a",
+        "line_code": "line-sim",
+        "area_code": "area-mix",
+        "cell_code": "cell-mix-1",
+        "edge_code": "edge-mix-1",
+        "device_code": "dev-mix-1",
+        "connection_id": null,
+        "state": "disconnected",
+        "severity": "error",
+        "reason": "edge_offline_or_stale",
+        "tags_connected": 0,
+        "tags_stale": 0,
+        "tags_disconnected": 5,
+        "last_change_at": "2026-08-27T16:51:43.261298Z",
+        "last_seen_at": "2026-08-27T16:51:43.261298Z"
+    }
+]

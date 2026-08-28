@@ -1,9 +1,16 @@
 export const es = {
   nav: {
+    operations: "Operación",
     live: "En vivo",
     history: "Histórico",
   },
   live: {
+    columns: {
+      code: "Código",
+      detail: "Detalle",
+      quality: "Calidad",
+      diagnostics: "Diagnóstico",
+    },
     title: "Estado en vivo",
     edgesOnline: "Edges en línea",
     site: "Sitio",
@@ -45,9 +52,10 @@ export const es = {
     printSelected: "Imprimir seleccionados",
     selectedCount: "Seleccionados",
     noTagSelected: "Ningún tag seleccionado.",
-    noPrintAutomation: "El tag seleccionado no tiene automatización de impresión (device.command print).",
+    noPrintAutomation:
+      "El tag seleccionado no tiene automatización de impresión (device.command print).",
     selectAtLeastOneRow: "Seleccione al menos una fila histórica.",
     printCommandSent: "Comando de impresión enviado. muestras={{count}} buffer={{bufferId}}",
-    printFailed: "Error al imprimir: {{error}}",
+    printFailed: "No se pudo imprimir",
   },
 };

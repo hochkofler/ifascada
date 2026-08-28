@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Cache temporal del plugin de TanStack Router (lo genera el dev server)
+.tanstack

@@ -1,9 +1,16 @@
 export const en = {
   nav: {
+    operations: "Operations",
     live: "Live",
     history: "History",
   },
   live: {
+    columns: {
+      code: "Code",
+      detail: "Detail",
+      quality: "Quality",
+      diagnostics: "Diagnostics",
+    },
     title: "Live status",
     edgesOnline: "Edges online",
     site: "Site",
@@ -48,6 +55,6 @@ export const en = {
     noPrintAutomation: "Selected tag has no print automation (device.command print).",
     selectAtLeastOneRow: "Select at least one historical row.",
     printCommandSent: "Print command sent. samples={{count}} buffer={{bufferId}}",
-    printFailed: "Print failed: {{error}}",
+    printFailed: "Could not print",
   },
 };

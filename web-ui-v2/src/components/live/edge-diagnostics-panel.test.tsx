@@ -14,25 +14,41 @@ describe("EdgeDiagnosticsPanel reset action", () => {
   });
 
   it("shows confirmed-recovered feedback once last_seen_at actually advances after reset", async () => {
-    vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({ accepted: true, topic: "x", request_id: null });
+    vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({
+      accepted: true,
+      topic: "x",
+      request_id: null,
+    });
     vi.spyOn(apiClient, "fetchEdgesCurrent")
       .mockResolvedValueOnce([{ last_seen_at: "2026-08-20T10:00:00Z" } as never]) // before
       .mockResolvedValueOnce([{ last_seen_at: "2026-08-20T10:00:05Z" } as never]); // after, advanced
     vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
-    render(<EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />);
+    render(
+      <EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />
+    );
     await userEvent.click(screen.getByRole("button", { name: /reset/i }));
     // The real implementation's first poll attempt only fires after one RESET_POLL_INTERVAL_MS
     // (2000ms) wait -- @testing-library's default waitFor timeout (1000ms) is shorter than that,
     // so it's raised here to comfortably clear one real poll interval plus test overhead. The
     // outer test timeout (3rd arg to `it`) is raised to match.
-    await waitFor(() => expect(screen.getByText(/reset confirmado/i)).toBeInTheDocument(), { timeout: 8000 });
+    await waitFor(() => expect(screen.getByText(/reset confirmado/i)).toBeInTheDocument(), {
+      timeout: 8000,
+    });
   }, 10000);
 
   it("shows a no-recovery-confirmed warning when accepted:true but last_seen_at never advances", async () => {
-    vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({ accepted: true, topic: "x", request_id: null });
-    vi.spyOn(apiClient, "fetchEdgesCurrent").mockResolvedValue([{ last_seen_at: "2026-08-20T10:00:00Z" } as never]);
+    vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({
+      accepted: true,
+      topic: "x",
+      request_id: null,
+    });
+    vi.spyOn(apiClient, "fetchEdgesCurrent").mockResolvedValue([
+      { last_seen_at: "2026-08-20T10:00:00Z" } as never,
+    ]);
     vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
-    render(<EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />);
+    render(
+      <EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />
+    );
     await userEvent.click(screen.getByRole("button", { name: /reset/i }));
     await waitFor(
       () => expect(screen.getByText(/no confirm[oó] recuperaci[oó]n/i)).toBeInTheDocument(),
@@ -46,9 +62,13 @@ describe("EdgeDiagnosticsPanel reset action", () => {
 
   it("shows an error state when the reset call itself fails (not just an unconfirmed recovery)", async () => {
     vi.spyOn(edgeActions, "resetEdge").mockRejectedValue(new Error("network error"));
-    vi.spyOn(apiClient, "fetchEdgesCurrent").mockResolvedValue([{ last_seen_at: "2026-08-20T10:00:00Z" } as never]);
+    vi.spyOn(apiClient, "fetchEdgesCurrent").mockResolvedValue([
+      { last_seen_at: "2026-08-20T10:00:00Z" } as never,
+    ]);
     vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
-    render(<EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />);
+    render(
+      <EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />
+    );
     await userEvent.click(screen.getByRole("button", { name: /reset/i }));
     await waitFor(() => expect(screen.getByText(/error al enviar/i)).toBeInTheDocument());
   });
@@ -66,7 +86,9 @@ describe("EdgeDiagnosticsPanel reset action", () => {
     const resetEdgeSpy = vi.spyOn(edgeActions, "resetEdge");
     resetEdgeSpy.mockClear();
     vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
-    render(<EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />);
+    render(
+      <EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />
+    );
     await userEvent.click(screen.getByRole("button", { name: /reset/i }));
     await waitFor(() => expect(screen.getByText(/error al enviar/i)).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /reset/i })).not.toBeDisabled();
@@ -80,17 +102,25 @@ describe("EdgeDiagnosticsPanel reset action", () => {
   // unhandled promise rejection with no error state shown, leaving the reset button permanently
   // disabled (resetState stuck at "sent") and the "command sent" message displayed forever.
   it("shows an error state (not a permanently stuck 'sent' state) when the poll loop itself rejects", async () => {
-    vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({ accepted: true, topic: "x", request_id: null });
+    vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({
+      accepted: true,
+      topic: "x",
+      request_id: null,
+    });
     vi.spyOn(apiClient, "fetchEdgesCurrent")
       .mockResolvedValueOnce([{ last_seen_at: "2026-08-20T10:00:00Z" } as never]) // pre-reset probe: succeeds
       .mockRejectedValueOnce(new Error("network error")); // first poll-loop attempt: rejects
     vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
-    render(<EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />);
+    render(
+      <EdgeDiagnosticsPanel edgeCode="edge-pack-1" site="plant-a" open onOpenChange={() => {}} />
+    );
     await userEvent.click(screen.getByRole("button", { name: /reset/i }));
     // The poll loop's first attempt only fires after one RESET_POLL_INTERVAL_MS (2000ms) wait --
     // raise waitFor's timeout (and the outer test timeout) to comfortably clear that plus overhead,
     // matching the pattern used by the confirmed-recovered test above.
-    await waitFor(() => expect(screen.getByText(/error al enviar/i)).toBeInTheDocument(), { timeout: 8000 });
+    await waitFor(() => expect(screen.getByText(/error al enviar/i)).toBeInTheDocument(), {
+      timeout: 8000,
+    });
     expect(screen.getByRole("button", { name: /reset/i })).not.toBeDisabled();
   }, 10000);
 });
@@ -114,7 +144,9 @@ describe("EdgeDiagnosticsPanel telemetry section", () => {
       } as never,
     ]);
     vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
-    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    render(
+      <EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />
+    );
     expect(await screen.findByText("tag_m1_t001")).toBeInTheDocument();
     expect(screen.getByText("12.5")).toBeInTheDocument();
     expect(screen.getByText("Good")).toBeInTheDocument();
@@ -124,7 +156,9 @@ describe("EdgeDiagnosticsPanel telemetry section", () => {
   it("shows the no-telemetry message when the edge has no tags", async () => {
     vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([]);
     vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
-    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    render(
+      <EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />
+    );
     expect(await screen.findByText(/sin tags reportando/i)).toBeInTheDocument();
   });
 });
@@ -134,9 +168,14 @@ describe("EdgeDiagnosticsPanel SSE telemetry patch", () => {
     vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([]);
     vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
     const subscribeSpy = vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
-    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    render(
+      <EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />
+    );
     await waitFor(() => {
-      expect(subscribeSpy).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ edge: "edge-mix-1" }));
+      expect(subscribeSpy).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ edge: "edge-mix-1" })
+      );
     });
   });
 
@@ -144,7 +183,14 @@ describe("EdgeDiagnosticsPanel SSE telemetry patch", () => {
     const subscribeSpy = vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
     // Clear the spy's call history from previous tests in this suite
     subscribeSpy.mockClear();
-    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open={false} onOpenChange={() => {}} />);
+    render(
+      <EdgeDiagnosticsPanel
+        edgeCode="edge-mix-1"
+        site="plant-a"
+        open={false}
+        onOpenChange={() => {}}
+      />
+    );
     expect(subscribeSpy).not.toHaveBeenCalled();
   });
 });
@@ -159,7 +205,9 @@ describe("EdgeDiagnosticsPanel SSE load throttling", () => {
       sseHandler = onMessage as () => void;
       return () => {};
     });
-    render(<EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />);
+    render(
+      <EdgeDiagnosticsPanel edgeCode="edge-mix-1" site="plant-a" open onOpenChange={() => {}} />
+    );
     await vi.waitFor(() => expect(sseHandler).toBeTypeOf("function"));
     fetchTagsSpy.mockClear(); // clear the initial on-open load() call
 

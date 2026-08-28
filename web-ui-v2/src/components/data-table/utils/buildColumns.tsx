@@ -43,12 +43,18 @@ export function buildColumns<T extends object>(
         if (def.cell) {
           content = def.cell(value, row.original);
         } else if (def.type === ColumnDisplayType.Boolean) {
+          // Divergencia deliberada respecto de libs/tables/src/utils/buildColumns.tsx de ifahub,
+          // que aca usa `bg-green-50 / text-green-700` y `bg-gray-50 / text-gray-600`: paleta
+          // cruda de Tailwind, sin variante on-dark. Es el mismo defecto que la auditoria de
+          // ifahub marca en otro lado ("instituciones usa dark:bg-blue-950 crudo en badges"),
+          // y en modo oscuro pinta un verde muy claro sobre una tarjeta oscura. Con tokens
+          // funciona en los dos temas. Vale proponerlo upstream.
           content = (
             <span
               className={
                 value
-                  ? "inline-flex items-center rounded-md bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20"
-                  : "inline-flex items-center rounded-md bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10"
+                  ? "inline-flex items-center rounded-md border border-success/30 bg-success/15 px-2 py-1 text-xs font-medium text-success"
+                  : "inline-flex items-center rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-muted-foreground"
               }
             >
               {value ? booleanLabels?.true : booleanLabels?.false}

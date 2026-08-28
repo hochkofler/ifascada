@@ -1,0 +1,80 @@
+[
+    {
+        "id": 48266,
+        "ts": "2026-08-27T18:59:19.977250Z",
+        "severity": "info",
+        "event_type": "edge.status.recovered",
+        "site_code": "plant-a",
+        "edge_code": "edge-pack-2",
+        "connection_id": null,
+        "device_code": null,
+        "tag_code": null,
+        "config_hash": null,
+        "op_id": null,
+        "message": "Edge status recovered",
+        "payload_json": {
+            "config_hash": null,
+            "config_last_check_at": null,
+            "config_sync_state": "unknown",
+            "config_target_hash": null,
+            "outbox_depth": 0,
+            "outbox_oldest_age_secs": null,
+            "schema_version": 1,
+            "source": "edge/edge-pack-2",
+            "status": "ok",
+            "timestamp": "2026-08-27T18:59:19.977250419Z"
+        }
+    },
+    {
+        "id": 48265,
+        "ts": "2026-08-27T18:59:19.976125Z",
+        "severity": "info",
+        "event_type": "edge.status.recovered",
+        "site_code": "plant-a",
+        "edge_code": "edge-pack-1",
+        "connection_id": null,
+        "device_code": null,
+        "tag_code": null,
+        "config_hash": null,
+        "op_id": null,
+        "message": "Edge status recovered",
+        "payload_json": {
+            "config_hash": null,
+            "config_last_check_at": null,
+            "config_sync_state": "unknown",
+            "config_target_hash": null,
+            "outbox_depth": 0,
+            "outbox_oldest_age_secs": null,
+            "schema_version": 1,
+            "source": "edge/edge-pack-1",
+            "status": "ok",
+            "timestamp": "2026-08-27T18:59:19.976125265Z"
+        }
+    },
+    {
+        "id": 48264,
+        "ts": "2026-08-27T18:59:19.035241Z",
+        "severity": "info",
+        "event_type": "edge.status.recovered",
+        "site_code": "plant-a",
+        "edge_code": "edge-mix-2",
+        "connection_id": null,
+        "device_code": null,
+        "tag_code": null,
+        "config_hash": null,
+        "op_id": null,
+        "message": "Edge status recovered",
+        "payload_json": {
+            "config_hash": null,
+            "config_last_check_at": null,
+            "config_sync_state": "unknown",
+            "config_target_hash": null,
+            "outbox_depth": 0,
+            "outbox_oldest_age_secs": null,
+            "schema_version": 1,
+            "source": "edge/edge-mix-2",
+            "status": "ok",
+            "timestamp": "2026-08-27T18:59:19.035241694Z"
+        }
+    }
+]

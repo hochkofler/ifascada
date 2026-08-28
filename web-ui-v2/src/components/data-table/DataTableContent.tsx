@@ -206,15 +206,21 @@ export function DataTableContent(): JSX.Element {
               <TableRow
                 key={row.id}
                 data-state={row.getIsSelected() ? "selected" : undefined}
+                data-depth={row.depth > 0 ? row.depth : undefined}
                 className={row.getIsSelected() ? "bg-muted/50" : undefined}
               >
-                {row.getVisibleCells().map((cell) => {
+                {row.getVisibleCells().map((cell, cellIndex) => {
                   const pinned = cell.column.getIsPinned() === "left";
+                  // Indentacion de filas hijas: se aplica en la PRIMERA celda, no en la fila,
+                  // para no romper la alineacion de las columnas siguientes ni el pinning.
+                  const indent =
+                    cellIndex === 0 && row.depth > 0 ? `${String(row.depth * 1.25)}rem` : undefined;
                   return (
                     <TableCell
                       key={cell.id}
                       style={{
                         width: cell.column.getSize() !== 150 ? cell.column.getSize() : undefined,
+                        ...(indent === undefined ? {} : { paddingLeft: indent }),
                         ...stickyStyle(cell.column, false, lastLeftId === cell.column.id),
                       }}
                       className={cx(pinned && "bg-background", densityCls.cell)}

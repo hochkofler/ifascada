@@ -1,34 +1,35 @@
-import { useMemo, useState, useEffect, useRef } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { subscribeSse, type RtEvent } from "@/lib/sse";
-import { fetchEdgesCurrent, fetchDevicesCurrent, type EdgeCurrent, type DeviceCurrent } from "@/lib/api-client";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import type { ColumnFiltersState } from "@tanstack/react-table";
+import { useTranslation } from "react-i18next";
+import { fetchEdgesCurrent, fetchDevicesCurrent, fetchTagsCurrent } from "@/lib/api-client";
 import { useOperationalContextStore } from "@/store/context-store";
-import { edgeConnected, lampFromDeviceState } from "@/lib/connectivity";
-import { formatServerDateTime } from "@/lib/datetime";
 import { ContextBar } from "@/components/context-bar";
 import { EdgesOnlineBadge } from "@/components/live/edges-online-badge";
 import { EdgeDiagnosticsPanel } from "@/components/live/edge-diagnostics-panel";
-import { ConnectivityDot } from "@/components/live/connectivity-dot";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { useTranslation } from "react-i18next";
+import { useSseRefetchNudge } from "@/components/live/use-sse-refetch-nudge";
+import {
+  buildLiveRows,
+  filterLiveRows,
+  liveRowId,
+  liveSubRows,
+  type LiveRow,
+} from "@/components/live/live-rows";
+import { getLiveColumns } from "@/components/live/live-columns";
+import { DataTable } from "@/components/data-table/DataTable";
+import type { ServerState, ServerHandlers } from "@/components/data-table/types";
+import { Button } from "@/components/ui/button";
 
-type DeviceRow = {
-  key: string;
-  device: DeviceCurrent;
-  edge: EdgeCurrent | undefined;
-  lamp: "good" | "warn" | "bad";
-};
-
-function buildDeviceRows(devices: DeviceCurrent[], edges: EdgeCurrent[]): DeviceRow[] {
-  const edgeByCode = new Map(edges.map((e) => [e.edge_code, e]));
-  return devices
-    .map((d) => {
-      const edge = edgeByCode.get(d.edge_code);
-      const conn = edgeConnected(edge);
-      return { key: `${d.edge_code}|${d.device_code}`, device: d, edge, lamp: lampFromDeviceState(d, conn) };
-    })
-    .sort((a, b) => a.device.device_code.localeCompare(b.device.device_code));
-}
+/**
+ * El poll de 2500 ms es la fuente de verdad; SSE solo adelanta el siguiente tick.
+ *
+ * No es una eleccion de conveniencia: un edge que se cae NO genera ningun evento, y su estado
+ * `disconnected` lo deriva el servidor de `now - last_seen_at > 45s`. SSE puede contar lo que
+ * pasa, no lo que dejo de pasar, asi que una vista puramente SSE mostraria un edge caido como
+ * online para siempre. Ver docs/central-persistence-architecture.md, seccion de derivacion por
+ * heartbeat: "el frontend debe refrescar los endpoints current periodicamente, no solo SSE".
+ */
+const LIVE_POLL_MS = 2500;
 
 export function LivePage() {
   const { t } = useTranslation();
@@ -40,147 +41,105 @@ export function LivePage() {
     cell: cell || undefined,
     edge: edge || undefined,
   };
+
   const edgesQuery = useQuery({
     queryKey: ["live-edges", filter],
     queryFn: () => fetchEdgesCurrent(200, filter),
-    refetchInterval: 2500,
+    refetchInterval: LIVE_POLL_MS,
   });
   const devicesQuery = useQuery({
     queryKey: ["live-devices", filter],
     queryFn: () => fetchDevicesCurrent(1000, filter),
-    refetchInterval: 2500,
+    refetchInterval: LIVE_POLL_MS,
+  });
+  // Los tags se traen de una sola vez con el mismo filtro de contexto y se agrupan por device en
+  // el cliente, en vez de una consulta por device al expandir: expandir es instantaneo, no hay
+  // spinners por fila, y no se multiplican peticiones sobre el pool de conexiones HTTP/1.1 que
+  // ya compite con las conexiones SSE de larga vida.
+  const tagsQuery = useQuery({
+    queryKey: ["live-tags", filter],
+    queryFn: () => fetchTagsCurrent(2000, filter),
+    refetchInterval: LIVE_POLL_MS,
   });
 
-  const queryClient = useQueryClient();
-  const pendingRef = useRef<Map<string, RtEvent>>(new Map());
-  const lastInvalidateAtRef = useRef(0);
+  useSseRefetchNudge(filter, ["live-edges", "live-devices", "live-tags"]);
 
-  useEffect(() => {
-    const unsubscribe = subscribeSse(
-      (evt) => {
-        const payload = evt.payload as { tag_id?: string; device_id?: string } | undefined;
-        const key = payload?.device_id ?? payload?.tag_id;
-        if (!key) return;
-        pendingRef.current.set(key, evt);
-      },
-      { site, line: line || undefined, area: area || undefined, cell: cell || undefined, edge: edge || undefined, excludeRaw: true }
-    );
-    const flush = setInterval(() => {
-      if (pendingRef.current.size === 0) return;
-      // Throttle to at most one SSE-triggered refetch round per second. Without this,
-      // a continuous telemetry stream (the real edge-sim fleet publishes roughly one
-      // event every 25ms) keeps this 120ms tick's pendingRef non-empty essentially
-      // always, turning an intended "occasional nudge on top of the 2.5s poll" into a
-      // refetch storm that competes with two long-lived SSE EventSource connections for
-      // the browser's small per-origin HTTP/1.1 connection pool (confirmed live during
-      // Task 9 verification: ~120ms actual request cadence instead of ~2.5s, producing
-      // failed/stuck requests and an empty grid).
-      const now = Date.now();
-      if (now - lastInvalidateAtRef.current < 1000) return;
-      pendingRef.current.clear();
-      lastInvalidateAtRef.current = now;
-      // A real-time nudge: invalidate so the next poll tick (already running every 2.5s) fires
-      // sooner instead of waiting out the full interval. This deliberately does NOT hand-patch
-      // individual device/edge objects in the cache -- reusing the same fetchDevicesCurrent/
-      // fetchEdgesCurrent path that already normalizes and shapes this data keeps there being
-      // exactly one code path that produces what the grid renders, matching the spec's "poll
-      // stays authoritative" decision instead of maintaining a second, divergence-prone copy.
-      queryClient.invalidateQueries({ queryKey: ["live-edges", filter] });
-      queryClient.invalidateQueries({ queryKey: ["live-devices", filter] });
-    }, 120);
-    return () => {
-      clearInterval(flush);
-      unsubscribe();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [site, line, area, cell, edge]);
-
-  const rows = useMemo(
-    () => buildDeviceRows(devicesQuery.data ?? [], edgesQuery.data ?? []),
-    [devicesQuery.data, edgesQuery.data]
+  const [filters, setFilters] = useState<ColumnFiltersState>([]);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const [diagnosticsEdge, setDiagnosticsEdge] = useState<{ edgeCode: string; site: string } | null>(
+    null
   );
 
-  // Edges with zero matching device rows would otherwise be invisible (and, since Reset now
-  // lives inside the diagnostics panel opened from a device row, unreachable) -- an edge that
-  // stopped reporting entirely is exactly the failure mode operators need to see. See spec
-  // Section 4.
-  const edgesWithNoDevices = useMemo(() => {
-    const devices = devicesQuery.data ?? [];
-    const edgeCodesWithDevices = new Set(devices.map((d) => d.edge_code));
-    return (edgesQuery.data ?? []).filter((e) => !edgeCodesWithDevices.has(e.edge_code));
-  }, [devicesQuery.data, edgesQuery.data]);
+  const allRows = useMemo(
+    () => buildLiveRows(devicesQuery.data ?? [], edgesQuery.data ?? [], tagsQuery.data ?? []),
+    [devicesQuery.data, edgesQuery.data, tagsQuery.data]
+  );
+  const rows = useMemo(() => filterLiveRows(allRows, filters), [allRows, filters]);
 
-  const [diagnosticsEdge, setDiagnosticsEdge] = useState<{ edgeCode: string; site: string } | null>(null);
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const clampedPage = Math.min(page, pageCount - 1);
+  const pageRows = useMemo(
+    () => rows.slice(clampedPage * pageSize, (clampedPage + 1) * pageSize),
+    [rows, clampedPage, pageSize]
+  );
+
+  const columns = useMemo(() => getLiveColumns(t), [t]);
+
+  const serverState: ServerState = {
+    page: clampedPage,
+    pageSize,
+    sorting: [],
+    filters,
+    globalFilter: "",
+  };
+  const serverHandlers: ServerHandlers = {
+    onPageChange: setPage,
+    onPageSizeChange: (size) => {
+      setPageSize(size);
+      setPage(0);
+    },
+    onSortingChange: () => undefined,
+    onFiltersChange: (next) => {
+      setFilters(next);
+      setPage(0);
+    },
+    onGlobalFilterChange: () => undefined,
+  };
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="flex items-center gap-4">
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         <ContextBar />
         <EdgesOnlineBadge edges={edgesQuery.data ?? []} />
       </div>
       <h1 className="text-lg font-semibold">{t("live.title")}</h1>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">{t("live.devicesCardTitle")}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1">
-          {(rows.length > 0 || edgesWithNoDevices.length > 0) && (
-            <div className="flex items-center gap-3 px-2 text-xs font-medium text-muted-foreground">
-              <span className="inline-block h-2.5 w-2.5" aria-hidden="true" />
-              <span className="min-w-0 flex-1">{t("live.devicesCardTitle")}</span>
-              <span>{t("live.edge")}</span>
-              <span>{t("live.lastSeen")}</span>
-            </div>
-          )}
-          {rows.map((r) => (
-            <div
-              key={r.key}
-              role="button"
-              tabIndex={0}
-              onClick={() => setDiagnosticsEdge({ edgeCode: r.device.edge_code, site: r.device.site_code })}
-              onKeyDown={(ev) => {
-                if (ev.key === "Enter" || ev.key === " ") {
-                  ev.preventDefault();
-                  setDiagnosticsEdge({ edgeCode: r.device.edge_code, site: r.device.site_code });
-                }
+      <DataTable<LiveRow>
+        data={pageRows}
+        columns={columns}
+        totalRows={rows.length}
+        loading={devicesQuery.isPending || edgesQuery.isPending}
+        error={devicesQuery.isError || edgesQuery.isError}
+        serverState={serverState}
+        serverHandlers={serverHandlers}
+        showSearch={false}
+        getSubRows={liveSubRows}
+        getRowId={liveRowId}
+        emptyState={{ title: t("live.noDevices") }}
+        rowActions={(row) =>
+          row.kind !== "tag" ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setDiagnosticsEdge({ edgeCode: row.edgeCode, site: row.site });
               }}
-              className="flex cursor-pointer items-center gap-3 rounded px-2 py-1 font-mono text-xs hover:bg-accent"
             >
-              <ConnectivityDot state={r.lamp} title={t("live.deviceStateTooltip", { state: r.device.state || t("live.qualityUnknown") })} />
-              <span className="min-w-0 flex-1 truncate">{r.device.device_code}</span>
-              <span className="text-muted-foreground">{r.device.edge_code}</span>
-              <span className="text-muted-foreground">
-                {r.device.last_seen_at ? formatServerDateTime(r.device.last_seen_at) : "-"}
-              </span>
-            </div>
-          ))}
-          {edgesWithNoDevices.map((e) => (
-            <div
-              key={`edge-no-devices|${e.edge_code}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => setDiagnosticsEdge({ edgeCode: e.edge_code, site: e.site_code })}
-              onKeyDown={(ev) => {
-                if (ev.key === "Enter" || ev.key === " ") {
-                  ev.preventDefault();
-                  setDiagnosticsEdge({ edgeCode: e.edge_code, site: e.site_code });
-                }
-              }}
-              className="flex cursor-pointer items-center gap-3 rounded px-2 py-1 font-mono text-xs hover:bg-accent"
-            >
-              <ConnectivityDot state={edgeConnected(e) ? "good" : "bad"} title={t("live.noDevicesForEdge")} />
-              <span className="min-w-0 flex-1 truncate">{e.edge_code}</span>
-              <span className="text-muted-foreground">{t("live.noDevicesForEdge")}</span>
-              <span className="text-muted-foreground">
-                {e.last_seen_at ? formatServerDateTime(e.last_seen_at) : "-"}
-              </span>
-            </div>
-          ))}
-          {rows.length === 0 && edgesWithNoDevices.length === 0 && (
-            <p className="text-sm text-muted-foreground">{t("live.noDevices")}</p>
-          )}
-        </CardContent>
-      </Card>
+              {t("live.columns.diagnostics")}
+            </Button>
+          ) : null
+        }
+      />
       {diagnosticsEdge && (
         <EdgeDiagnosticsPanel
           edgeCode={diagnosticsEdge.edgeCode}
