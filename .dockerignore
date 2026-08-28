@@ -1,0 +1,64 @@
+# Contexto de build de Docker.
+#
+# Los tres workflows que construyen imagenes (central-server, web-ui, web-ui-v2) usan la RAIZ del
+# repo como contexto: `docker build -f <sub>/Dockerfile ... .`. Sin este archivo, Docker recorre y
+# envia el repo entero al daemon antes de ejecutar una sola instruccion -- incluidos los
+# artefactos de compilacion de Rust y la instalacion del runner. Medido: la transferencia sola
+# superaba los 10 minutos, y el paso "Build Docker image" del release webuiv2-v0.3.0 tardo
+# 14m40s contra los 3m30s del release anterior.
+#
+# Lo que los Dockerfiles SI necesitan del contexto, y por eso no se excluye:
+#   central-server/Dockerfile -> Cargo.toml, Cargo.lock, crates/
+#   web-ui/Dockerfile         -> web-ui/
+#   web-ui-v2/Dockerfile      -> web-ui-v2/
+#
+# (edge-agent no construye imagen: su workflow hace `cargo build --release` directo.)
+
+# Historia de git: nada la necesita dentro de una imagen.
+.git
+.gitattributes
+.github
+
+# Artefactos de compilacion de Rust. Excluirlos NO afecta a los `COPY --from=builder
+# /app/target/release/...`: eso sale de la etapa de build dentro de la imagen, no del contexto.
+target
+target_tdd
+
+# Instalacion del runner self-hosted de GitHub Actions.
+actions-runner
+
+# Dependencias de JS: cada imagen instala las suyas, y copiar las del host las pisaria con
+# binarios de otra plataforma.
+node_modules
+**/node_modules
+**/dist
+**/.next
+
+# EXCEPCION: web-ui-v2/Dockerfile SI necesita el dist ya construido -- no recompila, reutiliza
+# lo que el workflow acaba de construir en el host. Sin esta negacion el COPY falla.
+!web-ui-v2/dist
+
+# Datos locales, volumenes y capturas.
+data
+tmp
+.playwright-mcp
+*.tar
+*.tar.gz
+*.png
+*.jpg
+Trace-*.json.gz
+
+# Documentacion y notas: no van dentro de ninguna imagen.
+docs
+*.md
+!crates/**/*.md
+
+# Config de editores y entorno local.
+.vscode
+.idea
+.env
+.env.*
+!.env.example
+
+# Sondas temporales de medicion.
+.ctx-probe.Dockerfile

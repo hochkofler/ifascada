@@ -50,6 +50,9 @@ jobs:
           npm test
           npm run build
 
+      # Depende del paso anterior: la imagen NO compila la app, empaqueta el `web-ui-v2/dist`
+      # que ese paso acaba de generar. Si se reordenan o se separan en jobs distintos, el COPY
+      # del Dockerfile falla (o peor, empaqueta un dist viejo). Ver el encabezado del Dockerfile.
       - name: Build Docker image
         shell: pwsh
         run: |

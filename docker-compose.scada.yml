@@ -115,6 +115,8 @@ services:
       - "${CENTRAL_API_PORT:-8088}:8088"
 
   web-ui-v2:
+    # Requiere `cd web-ui-v2 && npm ci && npm run build` antes de `--build`: esta imagen
+    # empaqueta el dist ya construido, no compila. Ver el encabezado del Dockerfile.
     build:
       context: .
       dockerfile: web-ui-v2/Dockerfile
