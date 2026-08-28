@@ -1,32 +1,41 @@
-# React + TypeScript + Vite
+# web-ui-v2
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Frontend React de ifascada: monitoreo en vivo e historico de tags de planta.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+React 19 + Vite + TypeScript estricto, TanStack Router/Query/Table, Tailwind 4 sobre los
+primitivos shadcn de `src/components/ui`, i18next (es), Zustand para estado de UI transversal,
+Zod para validar el borde HTTP.
 
-## React Compiler
+Buena parte del chrome (notificaciones, cascaron, breadcrumb, tema, DataTable) esta cosechada de
+las librerias compartidas de [ifahub](https://github.com/ifamasbun/ifahub); cada archivo dice de
+donde vino y que se adapto.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Comandos
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```
+npm run dev         # servidor de desarrollo (proxy /api -> 127.0.0.1:8088)
+npm run typecheck   # tsc --noEmit
+npm run lint        # oxlint
+npm test            # vitest
+npm run build       # typecheck + build de produccion
+npm run format      # prettier
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Backend
+
+Necesita el central-server. Con Docker, desde la raiz del repo:
+
+```
+POSTGRES_PASSWORD=postgres MQTT_PORT_EXTERNAL=41883 \
+  docker compose -f docker-compose.scada.yml --profile central up -d
+docker compose -f docker-compose.edge-sim.yml up -d   # telemetria simulada
+```
+
+`MQTT_PORT_EXTERNAL` es necesario porque el 51883 por defecto cae en un rango de puertos que
+Windows reserva.
+
+Los fixtures de `src/test/fixtures/` son respuestas reales de ese backend; el test de contrato
+(`src/lib/api-schemas.contract.test.ts`) los valida contra los esquemas de Zod, asi que corre sin
+necesidad de tener el servidor levantado.
