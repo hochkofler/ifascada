@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -28,6 +31,7 @@
     "react-i18next": "^17.0.12",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.6.0",
+    "zod": "^4.4.3",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
@@ -43,6 +47,7 @@
     "@vitest/ui": "^4.1.11",
     "jsdom": "^30.0.1",
     "oxlint": "^1.75.0",
+    "prettier": "^3.9.6",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
