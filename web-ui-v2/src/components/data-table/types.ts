@@ -1,5 +1,7 @@
 import type { ColumnFiltersState, SortingState } from "@tanstack/react-table";
 import type React from "react";
+import { ApiError } from "@/lib/api-error";
+import { getAuthHeader } from "@/lib/api-client";
 
 // ---------------------------------------------------------------------------
 // Minimal local stand-ins for `@ifahub/types` and `@ifahub/api-client`.
@@ -150,12 +152,20 @@ async function apiRequest<T>(
   }
   const response = await fetch(url, {
     method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    headers: {
+      // Este fetch se saltaba `getAuthHeader()`, el unico punto donde se inyectara la
+      // autorizacion cuando exista login: habria quedado sin el header ese dia.
+      ...getAuthHeader(),
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
   });
   if (!response.ok) {
-    throw new Error(`API request failed: ${String(response.status)} ${method} ${path}`);
+    // ApiError, no Error generico: asi `notify` puede sacarle el status y el motivo, igual que
+    // con el resto de las llamadas de la app.
+    const text = await response.text().catch(() => "");
+    throw new ApiError(response.status, text || `${method} ${path}`);
   }
   if (response.status === 204) return undefined as T;
   const text = await response.text();
@@ -274,6 +284,20 @@ export interface DataTableProps<T extends object> {
   /** Filtrado por columna habilitado por defecto (derivado del `type`). Default: true. Opt-out por columna con `filterable:false`. */
   defaultFilterable?: boolean;
   rowActions?: (row: T) => React.ReactNode;
+  /**
+   * Filas hijas de una fila, o `undefined` si no tiene. Pasarlo habilita la expansion
+   * (chevron por fila + indentacion por profundidad). Sin esta prop, nada cambia.
+   *
+   * Extension de ifascada sobre el DataTable de libs/tables, que no tiene expansion. Es
+   * aditiva y se apoya en `getExpandedRowModel` de TanStack: vale proponerla upstream.
+   */
+  getSubRows?: (row: T) => T[] | undefined;
+  /**
+   * Identidad estable de fila. OBLIGATORIA si se usa `getSubRows`: el id por defecto de
+   * TanStack es el indice del array, asi que en una grilla que refresca sola lo que el usuario
+   * tenia expandido se cerraria en cada refetch -- o se quedaria abierto sobre otra fila.
+   */
+  getRowId?: (row: T) => string;
   onSelectionChange?: (rows: T[]) => void;
 }
 

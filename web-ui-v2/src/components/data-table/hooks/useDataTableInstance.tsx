@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import {
   useReactTable,
   getCoreRowModel,
+  getExpandedRowModel,
+  type ExpandedState,
   type Table,
   type RowSelectionState,
   type ColumnDef,
@@ -10,6 +12,7 @@ import {
   type PaginationState,
   type VisibilityState,
 } from "@tanstack/react-table";
+import { ChevronRight } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getNumberLocale } from "../types";
 import type { DataTableProps, TableDensity } from "../types";
@@ -41,6 +44,8 @@ export function useDataTableInstance<T extends object>(
     selectable = false,
     locale = getNumberLocale(),
     rowActions,
+    getSubRows,
+    getRowId,
     onSelectionChange,
     density: initialDensity,
     defaultFilterable = true,
@@ -49,6 +54,7 @@ export function useDataTableInstance<T extends object>(
   const boolTrue = t("boolean.true");
   const boolFalse = t("boolean.false");
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [expanded, setExpanded] = useState<ExpandedState>({});
   const [density, setDensity] = useState<TableDensity>(initialDensity ?? "compact");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() =>
     initialColumnVisibility(columns)
@@ -93,6 +99,36 @@ export function useDataTableInstance<T extends object>(
       } satisfies ColumnDef<T>);
     }
 
+    if (getSubRows) {
+      // Columna sintetica del chevron, mismo patron que __select / __actions. Solo las filas
+      // con hijos muestran el control; las hojas dejan el hueco para que las columnas sigan
+      // alineadas.
+      cols.unshift({
+        id: "__expander",
+        enableSorting: false,
+        enableHiding: false,
+        enableResizing: false,
+        size: 32,
+        header: "",
+        cell: ({ row }) =>
+          row.getCanExpand() ? (
+            <button
+              type="button"
+              onClick={row.getToggleExpandedHandler()}
+              aria-expanded={row.getIsExpanded()}
+              aria-label={row.getIsExpanded() ? t("expander.collapse") : t("expander.expand")}
+              className="flex size-6 items-center justify-center rounded transition-colors hover:bg-accent"
+            >
+              <ChevronRight
+                className={`size-4 transition-transform duration-200 ${row.getIsExpanded() ? "rotate-90" : ""}`}
+              />
+            </button>
+          ) : (
+            <span className="block size-6" aria-hidden="true" />
+          ),
+      } satisfies ColumnDef<T>);
+    }
+
     if (rowActions) {
       cols.push({
         id: "__actions",
@@ -106,7 +142,17 @@ export function useDataTableInstance<T extends object>(
     }
 
     return cols;
-  }, [columns, selectable, rowActions, locale, defaultFilterable, t, boolTrue, boolFalse]);
+  }, [
+    columns,
+    selectable,
+    rowActions,
+    getSubRows,
+    locale,
+    defaultFilterable,
+    t,
+    boolTrue,
+    boolFalse,
+  ]);
 
   const handlePaginationChange = (updater: Updater<PaginationState>) => {
     const current: PaginationState = {
@@ -134,6 +180,7 @@ export function useDataTableInstance<T extends object>(
         pageSize: serverState.pageSize,
       },
       rowSelection,
+      expanded,
       columnVisibility,
       columnPinning: { left: pinnedLeft, right: [] },
     },
@@ -166,6 +213,9 @@ export function useDataTableInstance<T extends object>(
         return next;
       });
     },
+    ...(getSubRows ? { getSubRows, getExpandedRowModel: getExpandedRowModel() } : {}),
+    ...(getRowId ? { getRowId } : {}),
+    onExpandedChange: setExpanded,
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,

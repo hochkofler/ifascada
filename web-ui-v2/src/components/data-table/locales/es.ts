@@ -1,5 +1,9 @@
 /** Chrome strings for the DataTable (namespace "tables"). */
 export const esTables = {
+  expander: {
+    expand: "Expandir fila",
+    collapse: "Contraer fila",
+  },
   toolbar: {
     exportCsv: "Exportar CSV",
     selectAll: "Seleccionar todos",

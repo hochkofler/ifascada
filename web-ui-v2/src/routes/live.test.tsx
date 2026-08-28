@@ -18,12 +18,28 @@ describe("Live page SSE patching", () => {
   let sseHandler: ((evt: sse.RtEvent) => void) | undefined;
 
   beforeEach(() => {
-    useOperationalContextStore.setState({ site: "plant-a", line: "", area: "", cell: "", edge: "" });
+    useOperationalContextStore.setState({
+      site: "plant-a",
+      line: "",
+      area: "",
+      cell: "",
+      edge: "",
+    });
     vi.spyOn(apiClient, "fetchEdgesCurrent").mockResolvedValue([
-      { edge_code: "edge-mix-1", site_code: "plant-a", status: "online", last_seen_at: new Date().toISOString() } as never,
+      {
+        edge_code: "edge-mix-1",
+        site_code: "plant-a",
+        status: "online",
+        last_seen_at: new Date().toISOString(),
+      } as never,
     ]);
     vi.spyOn(apiClient, "fetchDevicesCurrent").mockResolvedValue([
-      { edge_code: "edge-mix-1", device_code: "dev-mix-1", site_code: "plant-a", state: "connected" } as never,
+      {
+        edge_code: "edge-mix-1",
+        device_code: "dev-mix-1",
+        site_code: "plant-a",
+        state: "connected",
+      } as never,
     ]);
     vi.spyOn(sse, "subscribeSse").mockImplementation((onMessage) => {
       sseHandler = onMessage;
@@ -50,7 +66,13 @@ describe("Live page SSE patching", () => {
 
 describe("Live page SSE refetch throttling", () => {
   beforeEach(() => {
-    useOperationalContextStore.setState({ site: "plant-a", line: "", area: "", cell: "", edge: "" });
+    useOperationalContextStore.setState({
+      site: "plant-a",
+      line: "",
+      area: "",
+      cell: "",
+      edge: "",
+    });
   });
 
   it("does not invalidate queries more than once per second even under a burst of SSE events", async () => {
@@ -74,21 +96,37 @@ describe("Live page SSE refetch throttling", () => {
     // Simulate the real edge-sim load: an SSE event every ~25ms for 3 seconds --
     // far faster than the 120ms flush tick, matching the burst this finding was based on.
     for (let elapsedMs = 0; elapsedMs < 3000; elapsedMs += 25) {
-      sseHandler!({ event_type: "telemetry", site: "plant-a", agent: "edge-mix-1", payload: { device_id: "dev-mix-1" }, published_at: new Date().toISOString() });
+      sseHandler!({
+        event_type: "telemetry",
+        site: "plant-a",
+        agent: "edge-mix-1",
+        payload: { device_id: "dev-mix-1" },
+        published_at: new Date().toISOString(),
+      });
       await vi.advanceTimersByTimeAsync(25);
     }
 
-    // Over 3 seconds, a once-per-second throttle allows at most 3-4 invalidation rounds
-    // (2 queries invalidated per round: live-edges, live-devices) -- not the ~25 rounds
-    // a 120ms-tick-driven invalidation would produce.
-    expect(invalidateSpy.mock.calls.length).toBeLessThanOrEqual(8);
+    // Over 3 seconds, a once-per-second throttle allows at most 3-4 invalidation ROUNDS --
+    // not the ~25 rounds a 120ms-tick-driven invalidation would produce. Se mide en rondas y no
+    // en llamadas crudas a proposito: cada ronda invalida una query por clave, asi que contar
+    // llamadas obligaria a retocar este numero cada vez que la pagina suma una query (paso al
+    // agregar live-tags), escondiendo si lo que cambio fue el throttle o solo el divisor.
+    const KEYS_PER_ROUND = 3; // live-edges, live-devices, live-tags
+    const rounds = invalidateSpy.mock.calls.length / KEYS_PER_ROUND;
+    expect(rounds).toBeLessThanOrEqual(4);
     vi.useRealTimers();
   });
 });
 
 describe("Live page edges with no matching devices", () => {
   beforeEach(() => {
-    useOperationalContextStore.setState({ site: "plant-a", line: "", area: "", cell: "", edge: "" });
+    useOperationalContextStore.setState({
+      site: "plant-a",
+      line: "",
+      area: "",
+      cell: "",
+      edge: "",
+    });
     vi.spyOn(sse, "subscribeSse").mockImplementation(() => () => {});
     vi.spyOn(apiClient, "fetchTagsCurrent").mockResolvedValue([]);
     vi.spyOn(apiClient, "fetchEdgeEvents").mockResolvedValue([]);
@@ -96,7 +134,12 @@ describe("Live page edges with no matching devices", () => {
 
   it("renders an edge with zero devices and opens its diagnostics panel on click", async () => {
     vi.spyOn(apiClient, "fetchEdgesCurrent").mockResolvedValue([
-      { edge_code: "edge-silent-1", site_code: "plant-a", status: "online", last_seen_at: new Date().toISOString() } as never,
+      {
+        edge_code: "edge-silent-1",
+        site_code: "plant-a",
+        status: "online",
+        last_seen_at: new Date().toISOString(),
+      } as never,
     ]);
     vi.spyOn(apiClient, "fetchDevicesCurrent").mockResolvedValue([]);
     const qc = new QueryClient();
@@ -106,8 +149,11 @@ describe("Live page edges with no matching devices", () => {
       </QueryClientProvider>
     );
 
-    const row = await screen.findByText("edge-silent-1");
-    await userEvent.click(row);
+    // El diagnostico se abre desde su propia accion, no haciendo clic en la fila: en la grilla
+    // nueva el clic en la fila es para expandir sus tags. El requisito no cambia -- Reset tiene
+    // que seguir siendo alcanzable para un edge sin ningun device.
+    await screen.findByText("edge-silent-1");
+    await userEvent.click(await screen.findByRole("button", { name: /diagn/i }));
 
     // The diagnostics panel (with its Reset button) must be reachable for an edge that has
     // no device rows to click through -- otherwise Reset is unreachable for exactly the edges
