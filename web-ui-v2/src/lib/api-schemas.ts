@@ -62,8 +62,17 @@ export const deviceCurrentSchema = z.object({
   tags_connected: z.number(),
   tags_stale: z.number(),
   tags_disconnected: z.number(),
+  /** Cuando cambio de estado por ultima vez. */
   last_change_at: timestamp,
-  last_seen_at: timestamp,
+  /**
+   * Cuando llego telemetria por ultima vez. NULLABLE a proposito: el backend lo deriva del
+   * MAX(ts) de los tags del dispositivo, asi que un dispositivo sin tags no tiene de donde
+   * derivarlo y devuelve null.
+   *
+   * Si esto quedara como `timestamp` a secas, ese caso haria fallar el `.parse()` y vaciaria la
+   * grilla entera -- el modo de falla que la validacion introduce y que hay que cubrir aca.
+   */
+  last_seen_at: timestamp.nullable(),
 });
 
 export const tagCurrentSchema = z.object({
@@ -111,6 +120,27 @@ export const opsEventSchema = z.object({
   payload_json: looseRecord,
 });
 
+/**
+ * Conexion: la capa de transporte entre el edge y sus dispositivos (un puerto serie, un enlace
+ * Modbus TCP). Derivado de `ConnectionCurrentDto` en crates/central-server/src/api.rs.
+ *
+ * `message` viene vacio cuando la conexion esta sana y lleva el motivo cuando falla -- que es
+ * justo lo que un operador necesita cuando "la balanza no reporta": saber si lo que se cayo es
+ * el puerto, no el equipo.
+ */
+export const connectionCurrentSchema = z.object({
+  site_code: z.string(),
+  line_code: z.string().nullable(),
+  area_code: z.string().nullable(),
+  cell_code: z.string().nullable(),
+  edge_code: z.string(),
+  connection_id: z.string(),
+  state: z.string(),
+  severity: z.string(),
+  last_change_at: timestamp,
+  message: z.string(),
+});
+
 export const contextOptionSchema = z.object({
   code: z.string(),
   name: z.string(),
@@ -122,3 +152,4 @@ export type TagCurrent = z.infer<typeof tagCurrentSchema>;
 export type TagHistory = z.infer<typeof tagHistorySchema>;
 export type OpsEvent = z.infer<typeof opsEventSchema>;
 export type ContextOption = z.infer<typeof contextOptionSchema>;
+export type ConnectionCurrent = z.infer<typeof connectionCurrentSchema>;

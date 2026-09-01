@@ -164,3 +164,37 @@ describe("tagHistorySchema / opsEventSchema / contextOptionSchema", () => {
     );
   });
 });
+
+describe("deviceCurrentSchema · last_seen_at nullable", () => {
+  const base = {
+    site_code: "plant-a",
+    line_code: null,
+    area_code: null,
+    cell_code: null,
+    edge_code: "e1",
+    device_code: "d1",
+    connection_id: null,
+    state: "connected",
+    severity: "info",
+    reason: null,
+    tags_connected: 0,
+    tags_stale: 0,
+    tags_disconnected: 0,
+    last_change_at: "2026-08-28T15:00:00Z",
+  };
+
+  // El backend deriva last_seen_at del MAX(ts) de los tags del dispositivo. Un dispositivo sin
+  // tags devuelve null, y si el esquema no lo aceptara el .parse() vaciaria la grilla entera.
+  it("acepta last_seen_at null, como devuelve un dispositivo sin tags", () => {
+    expect(deviceCurrentSchema.parse({ ...base, last_seen_at: null }).last_seen_at).toBeNull();
+  });
+
+  it("sigue aceptando una fecha cuando el dispositivo si tiene tags", () => {
+    const ts = "2026-08-28T15:04:00Z";
+    expect(deviceCurrentSchema.parse({ ...base, last_seen_at: ts }).last_seen_at).toBe(ts);
+  });
+
+  it("rechaza un last_seen_at ausente: el backend siempre emite la clave", () => {
+    expect(() => deviceCurrentSchema.parse(base)).toThrow();
+  });
+});

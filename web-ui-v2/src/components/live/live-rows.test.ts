@@ -37,6 +37,7 @@ function device(edgeCode: string, code: string, state = "connected"): DeviceCurr
     tags_stale: 1,
     tags_disconnected: 0,
     last_change_at: fresh,
+    // El backend lo deriva del MAX(ts) de los tags; en los fixtures coincide con `fresh`.
     last_seen_at: fresh,
   };
 }
@@ -239,5 +240,57 @@ describe("edges sin devices", () => {
   it("convive con los devices de otros edges", () => {
     const rows = buildLiveRows([device("e1", "d1")], [edge("e1"), edge("mudo")], [], NOW);
     expect(rows.map((r) => r.kind)).toEqual(["device", "edge"]);
+  });
+});
+
+describe("la fila del device muestra valores, no contadores", () => {
+  it("con un solo tag muestra su valor directo, sin hacer expandir", () => {
+    const rows = buildLiveRows([device("e1", "d1")], [edge("e1")], [tag("e1", "d1", "t1")], NOW);
+    expect(rows[0].detail).toBe("42");
+  });
+
+  it("con varios tags los une", () => {
+    const rows = buildLiveRows(
+      [device("e1", "d1")],
+      [edge("e1")],
+      [tag("e1", "d1", "t1"), tag("e1", "d1", "t2")],
+      NOW
+    );
+    expect(rows[0].detail).toBe("42 · 42");
+  });
+
+  it("a partir del cuarto tag corta con +N para no reventar la columna", () => {
+    const many = ["t1", "t2", "t3", "t4", "t5"].map((c) => tag("e1", "d1", c));
+    const rows = buildLiveRows([device("e1", "d1")], [edge("e1")], many, NOW);
+    expect(rows[0].detail).toBe("42 · 42 · 42 +2");
+  });
+
+  it("sin tags cae a los contadores, que es lo unico que queda", () => {
+    const rows = buildLiveRows([device("e1", "d1")], [edge("e1")], [], NOW);
+    expect(rows[0].detail).toBe("3 ok · 1 stale · 0 caidos");
+  });
+});
+
+describe("fechas: una por dispositivo, no repetida por tag", () => {
+  // Los tags de un dispositivo se reportan en el mismo instante, asi que repetir la fecha en
+  // cada fila hija es ruido.
+  it("el tag no repite la fecha cuando coincide con la del dispositivo", () => {
+    const rows = buildLiveRows([device("e1", "d1")], [edge("e1")], [tag("e1", "d1", "t1")], NOW);
+    expect(rows[0].lastSeen).toBe(fresh);
+    expect(liveSubRows(rows[0])?.[0].lastSeen).toBe("");
+  });
+
+  // ...pero si un tag se desfasa, esa diferencia es justo la senal que hay que ver.
+  it("el tag SI muestra su fecha cuando difiere de la del dispositivo", () => {
+    const rezagado = { ...tag("e1", "d1", "t1"), ts: "2026-08-28T14:30:00Z" };
+    const rows = buildLiveRows([device("e1", "d1")], [edge("e1")], [rezagado], NOW);
+    expect(liveSubRows(rows[0])?.[0].lastSeen).toBe("2026-08-28T14:30:00Z");
+  });
+
+  // last_seen_at es nullable: un dispositivo sin tags no tiene de donde derivarlo.
+  it("tolera last_seen_at null sin romper la fila", () => {
+    const sinFecha = { ...device("e1", "d1"), last_seen_at: null };
+    const rows = buildLiveRows([sinFecha], [edge("e1")], [], NOW);
+    expect(rows[0].lastSeen).toBe("");
   });
 });

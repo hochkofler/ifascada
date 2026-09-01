@@ -1,28 +1,57 @@
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchTagsCurrent, fetchLines, fetchAreas, fetchCells, fetchEdgesCurrent } from "@/lib/api-client";
+import {
+  fetchTagsCurrent,
+  fetchLines,
+  fetchAreas,
+  fetchCells,
+  fetchEdgesCurrent,
+} from "@/lib/api-client";
 import { useOperationalContextStore } from "@/store/context-store";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useAutoSelectFirst } from "@/lib/use-auto-select-first";
+import { dedupeByCode } from "@/components/live/context-options";
 import { useTranslation } from "react-i18next";
 
 export function ContextBar() {
   const { t } = useTranslation();
-  const { site, line, area, cell, edge, setSite, setLine, setArea, setCell, setEdge } = useOperationalContextStore();
+  const { site, line, area, cell, edge, setSite, setLine, setArea, setCell, setEdge } =
+    useOperationalContextStore();
 
   // No dedicated "list of sites" endpoint exists (verified against api.rs). Deriving the real,
   // currently-reporting site list from tag data is what actually fixes "Site is fixed text".
-  const allTags = useQuery({ queryKey: ["all-sites-probe"], queryFn: () => fetchTagsCurrent(1000) });
+  const allTags = useQuery({
+    queryKey: ["all-sites-probe"],
+    queryFn: () => fetchTagsCurrent(1000),
+  });
   const sites = Array.from(new Set((allTags.data ?? []).map((tg) => tg.site_code))).sort();
   useAutoSelectFirst(sites, site, setSite);
 
   const linesQuery = useQuery({ queryKey: ["ctxb-lines", site], queryFn: () => fetchLines(site) });
-  const areasQuery = useQuery({ queryKey: ["ctxb-areas", site, line], queryFn: () => fetchAreas(site, line || undefined) });
-  const cellsQuery = useQuery({ queryKey: ["ctxb-cells", site, line, area], queryFn: () => fetchCells(site, line || undefined, area || undefined) });
+  const areasQuery = useQuery({
+    queryKey: ["ctxb-areas", site, line],
+    queryFn: () => fetchAreas(site, line || undefined),
+  });
+  const cellsQuery = useQuery({
+    queryKey: ["ctxb-cells", site, line, area],
+    queryFn: () => fetchCells(site, line || undefined, area || undefined),
+  });
   const edgesQuery = useQuery({
     queryKey: ["ctxb-edges", site, line, area, cell],
-    queryFn: () => fetchEdgesCurrent(200, { site, line: line || undefined, area: area || undefined, cell: cell || undefined }),
+    queryFn: () =>
+      fetchEdgesCurrent(200, {
+        site,
+        line: line || undefined,
+        area: area || undefined,
+        cell: cell || undefined,
+      }),
   });
   const edgeOptions = Array.from(new Set((edgesQuery.data ?? []).map((e) => e.edge_code))).sort();
 
@@ -95,7 +124,7 @@ export function ContextBar() {
           <SelectValue placeholder={t("live.line")} />
         </SelectTrigger>
         <SelectContent>
-          {(linesQuery.data ?? []).map((l) => (
+          {dedupeByCode(linesQuery.data ?? []).map((l) => (
             <SelectItem key={l.code} value={l.code}>
               {l.name}
             </SelectItem>
@@ -107,7 +136,7 @@ export function ContextBar() {
           <SelectValue placeholder={t("live.area")} />
         </SelectTrigger>
         <SelectContent>
-          {(areasQuery.data ?? []).map((a) => (
+          {dedupeByCode(areasQuery.data ?? []).map((a) => (
             <SelectItem key={a.code} value={a.code}>
               {a.name}
             </SelectItem>
@@ -119,7 +148,7 @@ export function ContextBar() {
           <SelectValue placeholder={t("live.cell")} />
         </SelectTrigger>
         <SelectContent>
-          {(cellsQuery.data ?? []).map((c) => (
+          {dedupeByCode(cellsQuery.data ?? []).map((c) => (
             <SelectItem key={c.code} value={c.code}>
               {c.name}
             </SelectItem>
