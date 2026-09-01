@@ -70,9 +70,24 @@ export function lampFromTag(tag: TagCurrent, edgeConn: boolean): Lamp {
   return "warn";
 }
 
-/** Resumen de tags de un device. Los contadores ya vienen en el DTO: cero consultas extra. */
-export function tagSummary(device: DeviceCurrent): string {
-  return `${String(device.tags_connected)} ok · ${String(device.tags_stale)} stale · ${String(device.tags_disconnected)} caidos`;
+/**
+ * Que muestra la fila del device en la columna de detalle.
+ *
+ * Antes eran los contadores del DTO ("1 ok - 0 stale - 0 caidos"), que obligaban a expandir para
+ * ver el dato que al operador le importa. En planta cada dispositivo tiene UN tag, asi que
+ * expandir costaba un clic para ver una sola fila.
+ *
+ * Ahora muestra los valores directamente. Con varios tags los une, y a partir del cuarto corta
+ * con un "+N" para no reventar la columna -- ahi si conviene expandir.
+ */
+export function deviceDetail(tags: readonly LiveRow[], device: DeviceCurrent): string {
+  if (tags.length === 0) {
+    // Sin tags no hay valores que mostrar; los contadores son lo unico que queda.
+    return `${String(device.tags_connected)} ok · ${String(device.tags_stale)} stale · ${String(device.tags_disconnected)} caidos`;
+  }
+  const shown = tags.slice(0, 3).map((t) => t.detail);
+  const rest = tags.length - shown.length;
+  return rest > 0 ? `${shown.join(" · ")} +${String(rest)}` : shown.join(" · ");
 }
 
 /**
@@ -110,7 +125,10 @@ export function buildLiveRows(
           edge: "",
           detail: formatValueWithUnit(tag.value),
           quality: tag.quality.status ?? "",
-          lastSeen: tag.ts,
+          // Los tags de un mismo dispositivo se reportan en el mismo instante, asi que repetir
+          // la fecha en cada fila hija es ruido. Se muestra SOLO cuando difiere de la del
+          // dispositivo -- y esa diferencia es justamente la senal que vale la pena ver.
+          lastSeen: tag.ts === device.last_seen_at ? "" : tag.ts,
           site: tag.site_code,
           edgeCode: tag.edge_code,
           tags: [],
@@ -121,9 +139,10 @@ export function buildLiveRows(
         lamp: lampFromDeviceState(device, conn),
         code: device.device_code,
         edge: device.edge_code,
-        detail: tagSummary(device),
+        detail: deviceDetail(deviceTags, device),
         quality: device.state,
-        lastSeen: device.last_seen_at,
+        // El backend ya lo deriva del MAX(ts) de los tags del dispositivo; null si no tiene.
+        lastSeen: device.last_seen_at ?? "",
         site: device.site_code,
         edgeCode: device.edge_code,
         tags: deviceTags,

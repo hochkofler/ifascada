@@ -23,6 +23,7 @@ export const NAV_MODULES: readonly NavModule[] = [
     subItems: [
       { labelKey: "nav.live", to: "/live" },
       { labelKey: "nav.history", to: "/history" },
+      { labelKey: "nav.connections", to: "/connections" },
     ],
   },
 ];

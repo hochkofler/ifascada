@@ -76,11 +76,15 @@ export function getLiveColumns(t: TFunction): ColumnDefinition<LiveRow>[] {
       header: t("live.lastSeen"),
       type: ColumnDisplayType.String,
       width: 180,
-      cell: (_value, row) => (
-        <span className="font-mono text-xs text-muted-foreground">
-          {row.lastSeen ? formatServerDateTime(row.lastSeen) : "-"}
-        </span>
-      ),
+      // En una fila de tag, `lastSeen` vacio significa "el mismo instante que el dispositivo"
+      // (ver live-rows.ts), no "sin dato": se deja la celda en blanco para que se lea como
+      // heredada. El "-" queda solo para cuando de verdad no hay fecha.
+      cell: (_value, row) =>
+        row.kind === "tag" && !row.lastSeen ? null : (
+          <span className="font-mono text-xs text-muted-foreground">
+            {row.lastSeen ? formatServerDateTime(row.lastSeen) : "-"}
+          </span>
+        ),
     },
   ];
 }

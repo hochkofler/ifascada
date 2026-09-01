@@ -1,13 +1,26 @@
 export const en = {
   nav: {
+    connections: "Connections",
     operations: "Operations",
     live: "Live",
     history: "History",
   },
+  connections: {
+    title: "Connections",
+    empty: "No connections reporting",
+    stateTooltip: "Connection state: {{state}}",
+    columns: {
+      connection: "Connection",
+      state: "State",
+      severity: "Severity",
+      message: "Message",
+      lastChange: "Last change",
+    },
+  },
   live: {
     columns: {
       code: "Code",
-      detail: "Detail",
+      detail: "Value",
       quality: "Quality",
       diagnostics: "Diagnostics",
     },
