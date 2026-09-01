@@ -1,13 +1,26 @@
 export const es = {
   nav: {
+    connections: "Conexiones",
     operations: "Operación",
     live: "En vivo",
     history: "Histórico",
   },
+  connections: {
+    title: "Conexiones",
+    empty: "Sin conexiones reportando",
+    stateTooltip: "Estado de la conexion: {{state}}",
+    columns: {
+      connection: "Conexion",
+      state: "Estado",
+      severity: "Severidad",
+      message: "Mensaje",
+      lastChange: "Ultimo cambio",
+    },
+  },
   live: {
     columns: {
       code: "Código",
-      detail: "Detalle",
+      detail: "Valor",
       quality: "Calidad",
       diagnostics: "Diagnóstico",
     },

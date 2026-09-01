@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ApiError } from "@/lib/api-error";
 import {
+  connectionCurrentSchema,
   contextOptionSchema,
   deviceCurrentSchema,
   edgeCurrentSchema,
@@ -15,6 +16,7 @@ import {
  * Una sola fuente de verdad, y validacion real en el borde en vez de `res.json() as Promise<T>`.
  */
 export type {
+  ConnectionCurrent,
   TagCurrent,
   EdgeCurrent,
   DeviceCurrent,
@@ -166,4 +168,13 @@ export function fetchAreas(site?: string, line?: string) {
 export function fetchCells(site?: string, line?: string, area?: string) {
   const qs = toQuery({ site, line, area });
   return getParsed(`/api/context/cells?${qs}`, z.array(contextOptionSchema));
+}
+
+/**
+ * Conexiones actuales. El endpoint existia en el backend desde siempre y el frontend nunca lo
+ * llamaba: las conexiones en `failed` no se veian en ninguna parte de la app.
+ */
+export function fetchConnectionsCurrent(limit = 200, filter?: LiveFilter) {
+  const qs = toQuery({ limit, ...filter });
+  return getParsed(`/api/connections/current?${qs}`, z.array(connectionCurrentSchema));
 }
