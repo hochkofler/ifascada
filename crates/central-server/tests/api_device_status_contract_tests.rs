@@ -475,3 +475,247 @@ async fn device_status_changes_with_device_protocol_events() {
     let count: i64 = row.get(0);
     assert_eq!(count, 2);
 }
+
+/// `last_seen_at` de un dispositivo se deriva de la telemetria de sus tags, NO de la fila de
+/// `device_current_state`.
+///
+/// Reproduce el caso real de produccion: un dispositivo sano que lleva dias `connected` conserva
+/// en `device_current_state` la fecha de su ultimo CAMBIO de estado, porque
+/// `should_apply_device_transition` corta antes de escribir cuando el estado no cambio, y
+/// `last_seen_at` viajaba en ese mismo INSERT. Medido en planta: un dispositivo figuraba visto
+/// hacia 176 h cuando su tag habia reportado hacia 6 minutos.
+#[tokio::test]
+async fn devices_current_last_seen_at_derives_from_tag_telemetry() {
+    let dsn = match std::env::var("CENTRAL_PG_DSN") {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let client = connect_pg(&dsn).await;
+    run_migrations(&client).await;
+
+    let nonce = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let site = format!("ls-site-{}", nonce);
+    let edge = format!("ls-edge-{}", nonce);
+    let device = "dev-lastseen-1";
+    let conn = "conn-lastseen-1";
+    // tag_code_canonical tiene UNIQUE global y un CHECK que limita cada segmento a 2-16
+    // caracteres [A-Z0-9_], asi que el nonce no entra entero: se usan sus ultimos 7 digitos
+    // para que el test sea idempotente entre corridas.
+    let canonical = format!("SITEA.LINEA.AREAA.CELDA.DEV01.T{:07}", nonce.rem_euclid(10_000_000));
+    seed_device_with_connection(&client, &site, &edge, device, conn).await;
+
+    client
+        .execute(
+            "INSERT INTO edge_current_state(edge_id, status, last_seen_at, outbox_depth, outbox_oldest_secs, updated_at)
+             SELECT e.id, 'online', NOW(), 0, NULL, NOW()
+             FROM edges e JOIN sites s ON s.id = e.site_id
+             WHERE s.code=$1 AND e.edge_code=$2
+             ON CONFLICT (edge_id) DO UPDATE SET status='online', last_seen_at=EXCLUDED.last_seen_at, updated_at=NOW()",
+            &[&site, &edge],
+        )
+        .await
+        .expect("edge current state");
+
+    // El estado del dispositivo quedo escrito hace 7 dias, cuando cambio por ultima vez.
+    let stale = chrono::Utc::now() - chrono::Duration::days(7);
+    client
+        .execute(
+            "INSERT INTO device_current_state
+             (device_id, state, severity, reason, connection_id, tags_connected, tags_stale, tags_disconnected, last_change_at, last_seen_at, payload_json, updated_at)
+             SELECT d.id,'connected','info','ok',d.connection_id,1,0,0,$4,$4,'{}'::jsonb,NOW()
+             FROM devices d
+             JOIN edges e ON e.id=d.edge_id
+             JOIN sites s ON s.id=e.site_id
+             WHERE s.code=$1 AND e.edge_code=$2 AND d.device_code=$3
+             ON CONFLICT (device_id) DO UPDATE
+             SET last_change_at=EXCLUDED.last_change_at, last_seen_at=EXCLUDED.last_seen_at, updated_at=NOW()",
+            &[&site, &edge, &device, &stale],
+        )
+        .await
+        .expect("device current state");
+
+    // ...pero su tag reporto hace un minuto.
+    let fresh = chrono::Utc::now() - chrono::Duration::minutes(1);
+    client
+        .execute(
+            "INSERT INTO tags(device_id,tag_code,tag_code_canonical,display_name,name,value_type,source,metadata_json)
+             SELECT d.id,'tag_lastseen',$4,'Tag','Tag','number','modbus','{}'::jsonb
+             FROM devices d
+             JOIN edges e ON e.id=d.edge_id
+             JOIN sites s ON s.id=e.site_id
+             WHERE s.code=$1 AND e.edge_code=$2 AND d.device_code=$3
+             ON CONFLICT (device_id, tag_code) DO NOTHING",
+            &[&site, &edge, &device, &canonical],
+        )
+        .await
+        .expect("tag");
+    client
+        .execute(
+            "INSERT INTO tag_current_state(tag_id, ts, value_json, quality_json, source, updated_at)
+             SELECT t.id,$4,'1'::jsonb,'{\"status\":\"Good\"}'::jsonb,'modbus',NOW()
+             FROM tags t
+             JOIN devices d ON d.id=t.device_id
+             JOIN edges e ON e.id=d.edge_id
+             JOIN sites s ON s.id=e.site_id
+             WHERE s.code=$1 AND e.edge_code=$2 AND d.device_code=$3 AND t.tag_code='tag_lastseen'
+             ON CONFLICT (tag_id) DO UPDATE SET ts=EXCLUDED.ts, updated_at=NOW()",
+            &[&site, &edge, &device, &fresh],
+        )
+        .await
+        .expect("tag current state");
+
+    let read_client = connect_pg(&dsn).await;
+    let port = free_port();
+    let bind = format!("127.0.0.1:{}", port);
+    let state = ApiState {
+        client: Arc::new(read_client),
+        edge_cfg: EdgeConfigSettings {
+            enroll_token: "test-token".to_string(),
+            signing_secret: "test-secret".to_string(),
+            signing_key_id: "v1".to_string(),
+            runtime_config_path: "crates/edge-agent/config/bootstrap.example.json".to_string(),
+        },
+        mqtt_cmd: None,
+    };
+    let server = tokio::spawn(async move {
+        let _ = run_api_server(state, &bind).await;
+    });
+    let base = format!("http://127.0.0.1:{}", port);
+    wait_health(&base).await;
+
+    let rows: serde_json::Value = reqwest::Client::new()
+        .get(format!(
+            "{}/api/devices/current?site={}&edge={}&limit=10",
+            base, site, edge
+        ))
+        .send()
+        .await
+        .expect("devices current response")
+        .json()
+        .await
+        .expect("devices current json");
+    let items = rows.as_array().expect("array response");
+    assert_eq!(items.len(), 1);
+
+    let last_seen: chrono::DateTime<chrono::Utc> = items[0]
+        .get("last_seen_at")
+        .and_then(|v| v.as_str())
+        .expect("last_seen_at presente")
+        .parse()
+        .expect("last_seen_at parseable");
+    let last_change: chrono::DateTime<chrono::Utc> = items[0]
+        .get("last_change_at")
+        .and_then(|v| v.as_str())
+        .expect("last_change_at presente")
+        .parse()
+        .expect("last_change_at parseable");
+
+    // last_seen_at sigue a la telemetria del tag, no a la fila del dispositivo.
+    assert!(
+        (last_seen - fresh).num_seconds().abs() <= 1,
+        "last_seen_at deberia seguir al ts del tag ({}), pero fue {}",
+        fresh,
+        last_seen
+    );
+    // ...y last_change_at conserva su significado: cuando cambio de estado.
+    assert!(
+        (last_change - stale).num_seconds().abs() <= 1,
+        "last_change_at deberia conservar la fecha del cambio de estado ({}), pero fue {}",
+        stale,
+        last_change
+    );
+    // Antes del arreglo ambos eran el mismo valor; ahora tienen que diferir.
+    assert!(
+        last_seen > last_change,
+        "last_seen_at ({}) tiene que ser posterior a last_change_at ({})",
+        last_seen,
+        last_change
+    );
+
+    server.abort();
+}
+
+/// Un dispositivo sin tags no tiene de donde derivar `last_seen_at`: devuelve null en vez de la
+/// fecha del cambio de estado, que seria la misma mentira que este arreglo elimina.
+#[tokio::test]
+async fn devices_current_last_seen_at_is_null_without_tags() {
+    let dsn = match std::env::var("CENTRAL_PG_DSN") {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let client = connect_pg(&dsn).await;
+    run_migrations(&client).await;
+
+    let nonce = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let site = format!("nt-site-{}", nonce);
+    let edge = format!("nt-edge-{}", nonce);
+    let device = "dev-notags-1";
+    let conn = "conn-notags-1";
+    seed_device_with_connection(&client, &site, &edge, device, conn).await;
+
+    client
+        .execute(
+            "INSERT INTO edge_current_state(edge_id, status, last_seen_at, outbox_depth, outbox_oldest_secs, updated_at)
+             SELECT e.id, 'online', NOW(), 0, NULL, NOW()
+             FROM edges e JOIN sites s ON s.id = e.site_id
+             WHERE s.code=$1 AND e.edge_code=$2
+             ON CONFLICT (edge_id) DO UPDATE SET status='online', last_seen_at=EXCLUDED.last_seen_at, updated_at=NOW()",
+            &[&site, &edge],
+        )
+        .await
+        .expect("edge current state");
+    client
+        .execute(
+            "INSERT INTO device_current_state
+             (device_id, state, severity, reason, connection_id, tags_connected, tags_stale, tags_disconnected, last_change_at, last_seen_at, payload_json, updated_at)
+             SELECT d.id,'connected','info','ok',d.connection_id,0,0,0,NOW(),NOW(),'{}'::jsonb,NOW()
+             FROM devices d
+             JOIN edges e ON e.id=d.edge_id
+             JOIN sites s ON s.id=e.site_id
+             WHERE s.code=$1 AND e.edge_code=$2 AND d.device_code=$3
+             ON CONFLICT (device_id) DO NOTHING",
+            &[&site, &edge, &device],
+        )
+        .await
+        .expect("device current state");
+
+    let read_client = connect_pg(&dsn).await;
+    let port = free_port();
+    let bind = format!("127.0.0.1:{}", port);
+    let state = ApiState {
+        client: Arc::new(read_client),
+        edge_cfg: EdgeConfigSettings {
+            enroll_token: "test-token".to_string(),
+            signing_secret: "test-secret".to_string(),
+            signing_key_id: "v1".to_string(),
+            runtime_config_path: "crates/edge-agent/config/bootstrap.example.json".to_string(),
+        },
+        mqtt_cmd: None,
+    };
+    let server = tokio::spawn(async move {
+        let _ = run_api_server(state, &bind).await;
+    });
+    let base = format!("http://127.0.0.1:{}", port);
+    wait_health(&base).await;
+
+    let rows: serde_json::Value = reqwest::Client::new()
+        .get(format!(
+            "{}/api/devices/current?site={}&edge={}&limit=10",
+            base, site, edge
+        ))
+        .send()
+        .await
+        .expect("devices current response")
+        .json()
+        .await
+        .expect("devices current json");
+    let items = rows.as_array().expect("array response");
+    assert_eq!(items.len(), 1);
+    assert!(
+        items[0].get("last_seen_at").map(|v| v.is_null()).unwrap_or(false),
+        "un dispositivo sin tags deberia devolver last_seen_at null, devolvio {:?}",
+        items[0].get("last_seen_at")
+    );
+
+    server.abort();
+}

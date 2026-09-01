@@ -80,8 +80,11 @@ struct DeviceCurrentDto {
     tags_connected: i64,
     tags_stale: i64,
     tags_disconnected: i64,
+    /// Cuando cambio de estado por ultima vez.
     last_change_at: chrono::DateTime<chrono::Utc>,
-    last_seen_at: chrono::DateTime<chrono::Utc>,
+    /// Cuando llego telemetria por ultima vez, derivado del MAX(ts) de los tags del
+    /// dispositivo. `None` si no tiene tags: no hay de donde derivarlo.
+    last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -575,7 +578,30 @@ async fn list_devices_current(
                     ELSE dcs.tags_disconnected
                 END AS effective_tags_disconnected,
                 dcs.last_change_at,
-                dcs.last_seen_at
+                -- `last_seen_at` se DERIVA de la telemetria de los tags del dispositivo, no se
+                -- lee de `dcs`.
+                --
+                -- Por que: el INSERT de device_current_state escribe `last_change_at` y
+                -- `last_seen_at` con el MISMO parametro (ver refresh_device_state en
+                -- persistence/postgres.rs), y esa escritura solo ocurre cuando el estado
+                -- CAMBIA: `should_apply_device_transition` devuelve false de entrada si el
+                -- estado candidato es igual al actual. O sea que un dispositivo sano, que lleva
+                -- dias `connected` reportando cada pocos segundos, conservaba la fecha del
+                -- ultimo cambio de estado bajo un nombre que promete otra cosa. Medido en
+                -- produccion: CC-IN-BALA18-25 figuraba visto hace 176 h cuando su tag habia
+                -- reportado hacia 6 minutos.
+                --
+                -- Se corrige en la lectura y no en la escritura a proposito: el debounce de
+                -- transiciones (umbrales, histeresis de recuperacion) esta bien y existe para
+                -- no escribir en cada mensaje de telemetria. Derivarlo aca cuesta un indice
+                -- sobre tags(device_id, tag_code) y una busqueda por PK en tag_current_state.
+                --
+                -- NULL si el dispositivo no tiene tags: ahi no hay telemetria de la cual
+                -- derivar una respuesta, y devolver el cambio de estado seria la misma mentira.
+                (SELECT MAX(tcs.ts)
+                   FROM tags t
+                   JOIN tag_current_state tcs ON tcs.tag_id = t.id
+                  WHERE t.device_id = dcs.device_id) AS last_seen_at
              FROM device_current_state dcs
              JOIN devices d ON d.id = dcs.device_id
              JOIN edges e ON e.id = d.edge_id
