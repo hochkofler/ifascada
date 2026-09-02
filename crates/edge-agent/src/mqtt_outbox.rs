@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
-use tracing::warn;
+use tracing::{debug, warn};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -111,6 +111,20 @@ impl Default for OutboxConfig {
     }
 }
 
+/// Outcome of one attempt to hand a message to the MQTT client.
+///
+/// The three cases exist because "the client's request channel is full" is not a failure
+/// and must not be treated as one: the message is still queued in the outbox and the next
+/// flush will take it. Collapsing it into an error would log an anomaly on every
+/// reconnection; collapsing it into success would drop the row.
+#[derive(Debug)]
+pub enum PublishAttempt {
+    Sent,
+    /// The client could not accept the message right now. Retry on a later flush.
+    Backpressure,
+    Failed(String),
+}
+
 #[async_trait]
 pub trait OutboxPublisher: Send + Sync {
     async fn publish(
@@ -120,6 +134,29 @@ pub trait OutboxPublisher: Send + Sync {
         retain: bool,
         payload: Vec<u8>,
     ) -> Result<(), String>;
+
+    /// Hand a message to the client **without ever waiting for room**.
+    ///
+    /// `flush_pending` runs on the same task that drives `event_loop.poll()`, and that
+    /// poll is the only thing that drains the client's bounded request channel. An
+    /// implementation that blocks here deadlocks the bridge permanently -- see the
+    /// regression test in this module.
+    ///
+    /// The default delegates to [`Self::publish`], which is correct for implementations
+    /// with no bounded channel to fill (the test doubles). [`rumqttc::AsyncClient`]
+    /// overrides it.
+    async fn try_publish(
+        &self,
+        topic: String,
+        qos: QoS,
+        retain: bool,
+        payload: Vec<u8>,
+    ) -> PublishAttempt {
+        match self.publish(topic, qos, retain, payload).await {
+            Ok(()) => PublishAttempt::Sent,
+            Err(e) => PublishAttempt::Failed(e),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -254,14 +291,24 @@ impl PersistentMqttOutbox {
 
             let qos = u8_to_qos(msg.qos);
             match publisher
-                .publish(msg.topic.clone(), qos, msg.retain, msg.payload.clone())
+                .try_publish(msg.topic.clone(), qos, msg.retain, msg.payload.clone())
                 .await
             {
-                Ok(_) => {
+                PublishAttempt::Sent => {
                     self.delete_by_id(msg.id)?;
                     sent += 1;
                 }
-                Err(e) => {
+                PublishAttempt::Backpressure => {
+                    // Not a failure: the client has no room right now. Stop the batch so
+                    // the caller gets back to polling the event loop, which is what frees
+                    // that room. The row stays queued for the next flush.
+                    debug!(
+                        "mqtt outbox flush paused after {} message(s): client request channel full",
+                        sent
+                    );
+                    break;
+                }
+                PublishAttempt::Failed(e) => {
                     warn!("mqtt outbox flush failed, will retry later: {}", e);
                     break;
                 }
@@ -537,6 +584,7 @@ fn hash_to_32(input: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rumqttc::{AsyncClient, MqttOptions};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::Mutex as TokioMutex;
 
@@ -781,4 +829,64 @@ mod tests {
         assert_eq!(delivered[0], b"old-payload".to_vec());
         let _ = std::fs::remove_file(path);
     }
+
+    /// Regression test for the deadlock that left `lcc01` silent for 25 minutes on
+    /// 2026-09-02, after the broker came back from a power cut with a full outbox.
+    ///
+    /// `flush_pending` must never park waiting for room in the client's bounded request
+    /// channel. The only task that drains that channel is `event_loop.poll()`, and the
+    /// bridge's main loop calls `flush_pending` *before* it — so a flush that blocks on a
+    /// full channel keeps `poll()` from ever running again, nothing drains, and the wait
+    /// can never end. The socket sits in CLOSE_WAIT and the agent goes silent while still
+    /// looking alive to its supervisor.
+    #[tokio::test]
+    async fn test_flush_pending_yields_instead_of_blocking_on_a_full_request_channel() {
+        const CHANNEL_CAPACITY: usize = 4;
+        const ROWS: usize = 12;
+
+        let path = temp_file("mqtt_outbox_backpressure");
+        let outbox = PersistentMqttOutbox::new(&path, OutboxConfig::default()).unwrap();
+        for i in 0..ROWS {
+            outbox
+                .enqueue(
+                    OutboxMessageKind::Audit,
+                    format!("topic/{}", i),
+                    QoS::AtLeastOnce,
+                    false,
+                    vec![i as u8],
+                )
+                .await
+                .unwrap();
+        }
+
+        // A real client whose event loop is never polled: nothing drains the request
+        // channel, so it fills at CHANNEL_CAPACITY and stays full for the whole test.
+        // `_event_loop` must stay bound -- dropping it would close the channel and make
+        // the sends fail fast, which is a different situation from the one under test.
+        let opts = MqttOptions::new("outbox-backpressure-test", "127.0.0.1", 1883);
+        let (client, _event_loop) = AsyncClient::new(opts, CHANNEL_CAPACITY);
+
+        let flushed = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            outbox.flush_pending(&client, ROWS),
+        )
+        .await
+        .expect("flush_pending blocked on a full request channel instead of yielding")
+        .unwrap();
+
+        assert!(
+            flushed < ROWS,
+            "the channel holds {} and cannot have taken all {} rows",
+            CHANNEL_CAPACITY,
+            ROWS
+        );
+        assert_eq!(
+            outbox.len().await,
+            ROWS - flushed,
+            "rows that did not fit must stay in the outbox for the next attempt"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
 }

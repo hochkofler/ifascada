@@ -7,12 +7,12 @@ use crate::action_orchestrator::{ActionOrchestrator, ActionRequest, ActionRuntim
 use crate::bootstrap;
 use crate::mqtt_outbox::{
     OutboxConfig, OutboxMessageKind, OutboxPublisher, OutboxSecurity, OutboxStats,
-    PersistentMqttOutbox,
+    PersistentMqttOutbox, PublishAttempt,
 };
 use domain::id::TagId;
 use domain::AutomationSpec;
 use domain::tag::TagValue;
-use rumqttc::{AsyncClient, Event, EventLoop, Incoming, MqttOptions, QoS, Transport};
+use rumqttc::{AsyncClient, ClientError, Event, EventLoop, Incoming, MqttOptions, QoS, Transport};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1006,6 +1006,29 @@ impl OutboxPublisher for AsyncClient {
         self.publish(topic, qos, retain, payload)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// `AsyncClient::try_publish` is synchronous and returns instead of waiting when the
+    /// request channel is full, which is exactly the property `flush_pending` needs to
+    /// avoid wedging the task that drives `event_loop.poll()`.
+    ///
+    /// `rumqttc` 0.24 reports both "channel full" and "channel closed" as
+    /// `ClientError::TryRequest`, so this cannot tell them apart. Treating both as
+    /// backpressure is safe here: the channel is only closed once the `EventLoop` is
+    /// dropped, which happens when the bridge is already on its way out, and the row stays
+    /// in the outbox either way.
+    async fn try_publish(
+        &self,
+        topic: String,
+        qos: QoS,
+        retain: bool,
+        payload: Vec<u8>,
+    ) -> PublishAttempt {
+        match AsyncClient::try_publish(self, topic, qos, retain, payload) {
+            Ok(()) => PublishAttempt::Sent,
+            Err(ClientError::TryRequest(_)) => PublishAttempt::Backpressure,
+            Err(e) => PublishAttempt::Failed(e.to_string()),
+        }
     }
 }
 
