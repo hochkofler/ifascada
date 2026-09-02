@@ -47,12 +47,24 @@ function Remove-TaskIfExists([string]$Name) {
 
 function Stop-EdgeRuntime([string]$TaskToStop) {
     Stop-ScheduledTask -TaskName $TaskToStop -ErrorAction SilentlyContinue
-    Get-Process -Name "edge-agent" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    $runnerProcesses = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+
+    # El orden importa: primero el padre, despues el hijo. Matar el edge-agent antes que su
+    # supervisor solo consigue que el supervisor lo relance de inmediato, sobre el binario
+    # que estamos por reemplazar.
+    Get-Process -Name "edge-supervisor" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+    # Instalaciones viejas, anteriores al supervisor: el lanzador era un powershell.
+    $legacyRunners = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -like "*run-edge.ps1*" }
-    foreach ($proc in $runnerProcesses) {
+    foreach ($proc in $legacyRunners) {
         Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
     }
+
+    Start-Sleep -Seconds 1
+
+    # Red de seguridad. Con el Job Object el agente ya deberia haber caido junto al
+    # supervisor; esto cubre el caso de un agente huerfano de una instalacion anterior.
+    Get-Process -Name "edge-agent" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
 }
 
@@ -69,9 +81,12 @@ function Get-PlainPassword([SecureString]$ProvidedPassword, [string]$UserName) {
     }
 }
 
-function Install-TaskRunner([string]$Name, [string]$ScriptPath, [string]$UserName, [SecureString]$PasswordValue) {
+function Install-TaskRunner([string]$Name, [string]$SupervisorPath, [string]$EnvFile, [string]$UserName, [SecureString]$PasswordValue) {
     Remove-TaskIfExists -Name $Name
-    $taskAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`""
+    # The supervisor is what the task launches now; the agent is its child. A scheduled
+    # task cannot hand environment variables to what it launches, so edge.env travels as
+    # an argument.
+    $taskAction = New-ScheduledTaskAction -Execute $SupervisorPath -Argument "--env-file `"$EnvFile`""
     $taskTrigger = New-ScheduledTaskTrigger -AtStartup
     $taskSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 0)
     if ($UserName -eq "SYSTEM") {
@@ -84,14 +99,13 @@ function Install-TaskRunner([string]$Name, [string]$ScriptPath, [string]$UserNam
     Start-ScheduledTask -TaskName $Name
 }
 
-function Install-NssmService([string]$Name, [string]$ScriptPath, [string]$WorkingDir, [string]$OutLog, [string]$ErrLog) {
+function Install-NssmService([string]$Name, [string]$SupervisorPath, [string]$EnvFile, [string]$WorkingDir, [string]$OutLog, [string]$ErrLog) {
     $nssm = Get-Command nssm -ErrorAction SilentlyContinue
     if ($null -eq $nssm) {
         throw "InstallMode=nssm but nssm is not installed."
     }
     Remove-ServiceIfExists -Name $Name
-    $psExe = Join-Path $env:SystemRoot "System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-    & $nssm.Source install $Name $psExe "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`""
+    & $nssm.Source install $Name $SupervisorPath "--env-file `"$EnvFile`""
     & $nssm.Source set $Name AppDirectory $WorkingDir
     & $nssm.Source set $Name AppStdout $OutLog
     & $nssm.Source set $Name AppStderr $ErrLog
@@ -103,11 +117,15 @@ Assert-Admin
 
 $pkgRoot = Split-Path -Path $PSScriptRoot -Parent
 $binSource = Join-Path $pkgRoot "bin\\edge-agent.exe"
+$supervisorSource = Join-Path $pkgRoot "bin\\edge-supervisor.exe"
 $bootstrapSource = Join-Path $pkgRoot "config\\bootstrap.example.json"
 $envTemplate = Join-Path $pkgRoot "config\\edge.env.example"
 
 if (-not (Test-Path $binSource)) {
     throw "Missing binary: $binSource"
+}
+if (-not (Test-Path $supervisorSource)) {
+    throw "Missing binary: $supervisorSource"
 }
 if (-not (Test-Path $envTemplate)) {
     throw "Missing env template: $envTemplate"
@@ -119,6 +137,8 @@ $bootstrapTarget = Join-Path $configDir "bootstrap.json"
 $envTarget = Join-Path $DataRoot "edge.env"
 $runScript = Join-Path $DataRoot "run-edge.ps1"
 $exeTarget = Join-Path $InstallRoot "edge-agent.exe"
+# Beside the agent, which is where the supervisor looks for it by default.
+$supervisorTarget = Join-Path $InstallRoot "edge-supervisor.exe"
 
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
@@ -127,6 +147,7 @@ New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 
 Stop-EdgeRuntime -TaskToStop $TaskName
 Copy-Item $binSource $exeTarget -Force
+Copy-Item $supervisorSource $supervisorTarget -Force
 if (Test-Path $bootstrapSource) {
     Copy-Item $bootstrapSource $bootstrapTarget -Force
 }
@@ -148,65 +169,21 @@ $envLines = @(
     "EDGE_BOOTSTRAP_PATH=$bootstrapTarget",
     "MQTT_OUTBOX_PATH=$DataRoot\\mqtt_outbox.db",
     "EDGE_RUNTIME_CACHE_PATH=$DataRoot\\runtime_config.signed.json",
-    "EDGE_CONFIG_APPLY_RECEIPT_PATH=$DataRoot\\config_apply_receipt.json"
+    "EDGE_CONFIG_APPLY_RECEIPT_PATH=$DataRoot\\config_apply_receipt.json",
+    "",
+    "# Donde el supervisor escribe la salida del agente. El script de diagnostico",
+    "# edge-diagnose-and-restart.ps1 lee edge.err.log de aqui.",
+    "EDGE_SUPERVISOR_LOG_DIR=$logDir"
 )
 $envLines | Set-Content $envTarget -Encoding ASCII
 
-$runScriptTemplate = @'
-$ErrorActionPreference = "Stop"
-Set-StrictMode -Version Latest
-$envFile = "__ENVFILE__"
-$logDir = "__LOGDIR__"
-$workDir = "__INSTALLROOT__"
-$exePath = "__EXEPATH__"
-$outLog = Join-Path $logDir "edge.out.log"
-$errLog = Join-Path $logDir "edge.err.log"
-$taskLog = Join-Path $logDir "edge.task.log"
-
-New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-Start-Transcript -Path $taskLog -Append | Out-Null
-try {
-  if (-not (Test-Path $envFile)) {
-    throw "edge.env not found: $envFile"
-  }
-  if (-not (Test-Path $exePath)) {
-    throw "edge-agent.exe not found: $exePath"
-  }
-  New-Item -ItemType File -Force -Path $outLog | Out-Null
-  New-Item -ItemType File -Force -Path $errLog | Out-Null
-
-  Get-Content $envFile | ForEach-Object {
-    if ($_ -match '^\s*#' -or $_ -notmatch '=') { return }
-    $k, $v = $_ -split '=', 2
-    [Environment]::SetEnvironmentVariable($k.Trim(), $v.Trim(), 'Process')
-  }
-
-  Write-Host ("[runner] starting edge-agent pid-parent={0} exe={1}" -f $PID, $exePath)
-  while ($true) {
-    $startedAt = Get-Date
-    & $exePath 1>> $outLog 2>> $errLog
-    $exitCode = $LASTEXITCODE
-    $elapsed = (Get-Date) - $startedAt
-    Write-Host ("[runner] edge-agent exited code={0} after {1:n1}s; restart in 5s" -f $exitCode, $elapsed.TotalSeconds)
-    Start-Sleep -Seconds 5
-  }
+# run-edge.ps1 ya no se genera: el supervisor lo reemplaza. Una copia vieja ademas es
+# peligrosa -- correrla a mano levantaria un segundo agente junto al supervisado, ambos
+# peleando por los mismos puertos COM y el mismo MQTT client_id.
+if (Test-Path $runScript) {
+    Remove-Item $runScript -Force
+    Write-Host "Removed the obsolete run-edge.ps1"
 }
-catch {
-  $msg = $_ | Out-String
-  Add-Content -Path $errLog -Value ("[runner] fatal error`r`n{0}" -f $msg)
-  Write-Host ("[runner] fatal error: {0}" -f $_.Exception.Message)
-  exit 1
-}
-finally {
-  Stop-Transcript | Out-Null
-}
-'@
-$runScriptContent = $runScriptTemplate
-$runScriptContent = $runScriptContent.Replace("__ENVFILE__", $envTarget)
-$runScriptContent = $runScriptContent.Replace("__LOGDIR__", $logDir)
-$runScriptContent = $runScriptContent.Replace("__INSTALLROOT__", $InstallRoot)
-$runScriptContent = $runScriptContent.Replace("__EXEPATH__", $exeTarget)
-$runScriptContent | Set-Content $runScript -Encoding ASCII
 
 Remove-ServiceIfExists -Name $ServiceName
 Remove-TaskIfExists -Name $TaskName
@@ -216,19 +193,19 @@ $errLog = "$logDir\\edge.err.log"
 $taskLog = "$logDir\\edge.task.log"
 switch ($InstallMode) {
     "nssm" {
-        Install-NssmService -Name $ServiceName -ScriptPath $runScript -WorkingDir $DataRoot -OutLog $outLog -ErrLog $errLog
+        Install-NssmService -Name $ServiceName -SupervisorPath $supervisorTarget -EnvFile $envTarget -WorkingDir $DataRoot -OutLog $outLog -ErrLog $errLog
         Write-Host "Installed mode: nssm service"
     }
     "task" {
-        Install-TaskRunner -Name $TaskName -ScriptPath $runScript -UserName $RunAsUser -PasswordValue $RunAsPassword
+        Install-TaskRunner -Name $TaskName -SupervisorPath $supervisorTarget -EnvFile $envTarget -UserName $RunAsUser -PasswordValue $RunAsPassword
         Write-Host "Installed mode: scheduled task"
     }
     "auto" {
         if ($null -ne (Get-Command nssm -ErrorAction SilentlyContinue)) {
-            Install-NssmService -Name $ServiceName -ScriptPath $runScript -WorkingDir $DataRoot -OutLog $outLog -ErrLog $errLog
+            Install-NssmService -Name $ServiceName -SupervisorPath $supervisorTarget -EnvFile $envTarget -WorkingDir $DataRoot -OutLog $outLog -ErrLog $errLog
             Write-Host "Installed mode: nssm service"
         } else {
-            Install-TaskRunner -Name $TaskName -ScriptPath $runScript -UserName $RunAsUser -PasswordValue $RunAsPassword
+            Install-TaskRunner -Name $TaskName -SupervisorPath $supervisorTarget -EnvFile $envTarget -UserName $RunAsUser -PasswordValue $RunAsPassword
             Write-Host "Installed mode: scheduled task (nssm not found)"
         }
     }

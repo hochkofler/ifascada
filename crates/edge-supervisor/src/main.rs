@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use edge_supervisor::child::{AgentChild, ChildSpec};
-use edge_supervisor::config::{parse_env_file, SupervisorConfig};
+use edge_supervisor::config::{env_file_from_args, parse_env_file, SupervisorConfig};
 use edge_supervisor::control::ControlClient;
 use edge_supervisor::supervisor::{Supervisor, DEFAULT_CHILD_WATCH_INTERVAL};
 use std::collections::HashMap;
@@ -71,8 +71,13 @@ async fn main() -> Result<()> {
 /// it wrote every line of `edge.env` into the process before launching the agent.
 fn collect_vars() -> HashMap<String, String> {
     let mut vars: HashMap<String, String> = std::env::vars().collect();
-    let Some(path) = vars.get("EDGE_SUPERVISOR_ENV_FILE").cloned() else {
-        return vars;
+    // The command line wins: it is the only channel a Windows scheduled task has.
+    let path = match env_file_from_args(std::env::args()) {
+        Some(p) => p.to_string_lossy().into_owned(),
+        None => match vars.get("EDGE_SUPERVISOR_ENV_FILE") {
+            Some(p) => p.clone(),
+            None => return vars,
+        },
     };
     match std::fs::read_to_string(&path) {
         Ok(content) => {

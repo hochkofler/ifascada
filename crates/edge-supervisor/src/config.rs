@@ -34,6 +34,25 @@ pub fn parse_env_file(content: &str) -> HashMap<String, String> {
         .collect()
 }
 
+/// Picks up `--env-file <path>` from the command line.
+///
+/// A Windows scheduled task launches an executable with arguments and cannot set
+/// environment variables for it, so the location of `edge.env` has to arrive this way.
+pub fn env_file_from_args(args: impl IntoIterator<Item = String>) -> Option<PathBuf> {
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "--env-file" {
+            // A dangling flag yields None rather than panicking: a deployment typo should
+            // cost the control channel, never the agent.
+            return args.next().filter(|v| !v.trim().is_empty()).map(PathBuf::from);
+        }
+        if let Some(value) = arg.strip_prefix("--env-file=") {
+            return Some(PathBuf::from(value));
+        }
+    }
+    None
+}
+
 /// Everything needed to ask central for orders. Absent when the host has not been given
 /// central's address or a token.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,6 +254,33 @@ esta linea no tiene igual
             "only the first = separates; secrets often end in padding"
         );
         assert_eq!(parsed.len(), 4, "comments and junk lines must be skipped");
+    }
+
+
+    /// A Windows scheduled task cannot hand environment variables to what it launches, so
+    /// the path to `edge.env` has to arrive as an argument. systemd can do either, and
+    /// using the same flag on both keeps one deployment story.
+    #[test]
+    fn the_env_file_can_be_named_on_the_command_line() {
+        let args = ["edge-supervisor", "--env-file", "C:/ProgramData/ifascada/edge/edge.env"];
+        assert_eq!(
+            env_file_from_args(args.iter().map(|s| s.to_string())),
+            Some(PathBuf::from("C:/ProgramData/ifascada/edge/edge.env"))
+        );
+    }
+
+    #[test]
+    fn without_the_flag_there_is_no_env_file_from_the_command_line() {
+        let args = ["edge-supervisor"];
+        assert_eq!(env_file_from_args(args.iter().map(|s| s.to_string())), None);
+    }
+
+    /// A flag with nothing after it is a deployment mistake worth surviving: the agent
+    /// still gets launched with whatever environment was inherited.
+    #[test]
+    fn a_dangling_flag_does_not_panic() {
+        let args = ["edge-supervisor", "--env-file"];
+        assert_eq!(env_file_from_args(args.iter().map(|s| s.to_string())), None);
     }
 
 }
