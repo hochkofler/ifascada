@@ -1,4 +1,5 @@
 pub mod api;
+pub mod edge_control;
 pub mod ingestion;
 pub mod messages;
 pub mod mqtt_consumer;

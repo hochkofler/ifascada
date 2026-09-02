@@ -131,6 +131,8 @@ async fn connections_current_returns_connection_domain_state() {
             runtime_config_path: "crates/edge-agent/config/bootstrap.example.json".to_string(),
         },
         mqtt_cmd: None,
+        waiters: central_server::edge_control::EdgeWaiters::new(),
+        control_wait: std::time::Duration::from_millis(50),
     };
     let server = tokio::spawn(async move {
         let _ = run_api_server(state, &bind).await;

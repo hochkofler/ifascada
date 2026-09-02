@@ -191,6 +191,8 @@ async fn devices_current_endpoint_contract() {
             runtime_config_path: "crates/edge-agent/config/bootstrap.example.json".to_string(),
         },
         mqtt_cmd: None,
+        waiters: central_server::edge_control::EdgeWaiters::new(),
+        control_wait: std::time::Duration::from_millis(50),
     };
     let server = tokio::spawn(async move {
         let _ = run_api_server(state, &bind).await;
@@ -576,6 +578,8 @@ async fn devices_current_last_seen_at_derives_from_tag_telemetry() {
             runtime_config_path: "crates/edge-agent/config/bootstrap.example.json".to_string(),
         },
         mqtt_cmd: None,
+        waiters: central_server::edge_control::EdgeWaiters::new(),
+        control_wait: std::time::Duration::from_millis(50),
     };
     let server = tokio::spawn(async move {
         let _ = run_api_server(state, &bind).await;
@@ -691,6 +695,8 @@ async fn devices_current_last_seen_at_is_null_without_tags() {
             runtime_config_path: "crates/edge-agent/config/bootstrap.example.json".to_string(),
         },
         mqtt_cmd: None,
+        waiters: central_server::edge_control::EdgeWaiters::new(),
+        control_wait: std::time::Duration::from_millis(50),
     };
     let server = tokio::spawn(async move {
         let _ = run_api_server(state, &bind).await;

@@ -15,13 +15,18 @@ use tokio_postgres::{Client, NoTls};
 use rumqttc::{AsyncClient, QoS};
 use tokio::time::Duration;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{error, info};
+use tracing::{error, info, warn};
+use crate::edge_control::{wait_for_order, EdgeWaiters, PendingOrder};
 
 #[derive(Clone)]
 pub struct ApiState {
     pub client: Arc<Client>,
     pub edge_cfg: EdgeConfigSettings,
     pub mqtt_cmd: Option<Arc<AsyncClient>>,
+    /// One waiter per edge, so queueing an order wakes only the supervisor it is for.
+    pub waiters: EdgeWaiters,
+    /// How long a supervisor's long-poll is held before it is answered empty.
+    pub control_wait: Duration,
 }
 
 #[derive(Clone)]
@@ -292,19 +297,37 @@ struct EdgeActionCommandMessage {
 #[derive(Debug, Serialize)]
 struct EdgeResetResponse {
     accepted: bool,
-    topic: String,
+    // `topic` is gone on purpose: it named an MQTT topic that is no longer published, and
+    // returning an invented value would mislead whoever reads the response.
     request_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct EdgeResetCommandMessage {
-    schema_version: u16,
-    source: String,
-    request_id: Option<String>,
-    reason: Option<String>,
-    operator: Option<String>,
-    timestamp: chrono::DateTime<chrono::Utc>,
+#[derive(Debug, Deserialize)]
+struct EdgeControlPendingRequest {
+    edge_id: String,
+    enrollment_token: String,
 }
+
+#[derive(Debug, Serialize)]
+struct EdgeControlPendingResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EdgeControlAckRequest {
+    edge_id: String,
+    enrollment_token: String,
+    request_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct EdgeControlAckResponse {
+    accepted: bool,
+}
+
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SignedRuntimeConfigEnvelope {
@@ -354,6 +377,8 @@ pub async fn run_api_server(state: ApiState, bind: &str) -> Result<()> {
         .route("/api/ops/events", get(list_operational_events))
         .route("/api/ops/events/stream", get(stream_operational_events))
         .route("/api/edges/reset", post(edge_reset))
+        .route("/api/edge/control/pending", post(edge_control_pending))
+        .route("/api/edge/control/ack", post(edge_control_ack))
         .route("/api/edges/action", post(edge_action))
         .route("/api/edge/config/enroll", post(edge_enroll))
         .route("/api/edge/config/check", post(edge_config_check))
@@ -993,34 +1018,146 @@ async fn edge_reset(
     if req.site_code.trim().is_empty() || req.edge_code.trim().is_empty() {
         return Err(axum::http::StatusCode::BAD_REQUEST);
     }
-    let Some(client) = state.mqtt_cmd.clone() else {
-        return Err(axum::http::StatusCode::SERVICE_UNAVAILABLE);
-    };
-    let topic = format!(
-        "scada/{}/edge/{}/control/reset",
-        req.site_code.trim(),
-        req.edge_code.trim()
-    );
-    let msg = EdgeResetCommandMessage {
-        schema_version: 1,
-        source: "central-api".to_string(),
-        request_id: req.request_id.clone(),
-        reason: req.reason.clone(),
-        operator: req.operator.clone(),
-        timestamp: chrono::Utc::now(),
-    };
-    let payload =
-        serde_json::to_vec(&msg).map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    client
-        .publish(topic.clone(), QoS::AtLeastOnce, false, payload)
+    let edge_code = req.edge_code.trim().to_string();
+
+    // Queued, not published. This used to go out over MQTT and reach the agent through the
+    // very event loop whose deadlock the reset exists to clear, so it only ever worked on
+    // an agent that did not need it.
+    let request_id = req
+        .request_id
+        .clone()
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| format!("{}-{}", edge_code, chrono::Utc::now().timestamp_millis()));
+
+    state
+        .client
+        .execute(
+            "INSERT INTO edge_control_command (edge_code, request_id, kind, reason, operator)
+             VALUES ($1, $2, 'restart', $3, $4)
+             ON CONFLICT (edge_code, request_id) DO NOTHING",
+            &[&edge_code, &request_id, &req.reason, &req.operator],
+        )
         .await
-        .map_err(|_| axum::http::StatusCode::BAD_GATEWAY)?;
+        .map_err(|e| {
+            error!("could not queue a restart for {}: {}", edge_code, e);
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Latency only. A supervisor that misses this still finds the order when its wait
+    // expires, which is what keeps the wake from being load-bearing.
+    state.waiters.wake(&edge_code);
+    info!(
+        "queued restart for edge={} request_id={} operator={:?}",
+        edge_code, request_id, req.operator
+    );
 
     Ok(Json(EdgeResetResponse {
         accepted: true,
-        topic,
-        request_id: req.request_id,
+        request_id: Some(request_id),
     }))
+}
+
+/// The supervisor's long-poll. Held open until there is an order or the wait expires.
+async fn edge_control_pending(
+    State(state): State<ApiState>,
+    Json(req): Json<EdgeControlPendingRequest>,
+) -> Result<Json<EdgeControlPendingResponse>, axum::http::StatusCode> {
+    let edge_code = req.edge_id.trim().to_string();
+    if edge_code.is_empty() {
+        return Err(axum::http::StatusCode::BAD_REQUEST);
+    }
+    if req.enrollment_token != state.edge_cfg.enroll_token {
+        return Err(axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    let notify = state.waiters.for_edge(&edge_code);
+    let client = state.client.clone();
+    let edge_for_fetch = edge_code.clone();
+
+    let order = wait_for_order(
+        || {
+            let client = client.clone();
+            let edge = edge_for_fetch.clone();
+            async move {
+                let row = client
+                    .query_opt(
+                        "SELECT request_id, kind FROM edge_control_command
+                         WHERE edge_code = $1 AND completed_at IS NULL
+                         ORDER BY requested_at ASC
+                         LIMIT 1",
+                        &[&edge],
+                    )
+                    .await?;
+                Ok(row.map(|r| PendingOrder {
+                    request_id: r.get(0),
+                    kind: r.get(1),
+                }))
+            }
+        },
+        &notify,
+        state.control_wait,
+    )
+    .await
+    .map_err(|e| {
+        error!("control poll failed for {}: {}", edge_code, e);
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    if let Some(order) = &order {
+        // Purely diagnostic, so failing here must not withhold the order from a supervisor
+        // that is waiting to act on it.
+        if let Err(e) = state
+            .client
+            .execute(
+                "UPDATE edge_control_command SET delivered_at = now()
+                 WHERE edge_code = $1 AND request_id = $2 AND delivered_at IS NULL",
+                &[&edge_code, &order.request_id],
+            )
+            .await
+        {
+            warn!("could not mark {} as delivered: {}", order.request_id, e);
+        }
+    }
+
+    Ok(Json(EdgeControlPendingResponse {
+        kind: order.as_ref().map(|o| o.kind.clone()),
+        request_id: order.map(|o| o.request_id),
+    }))
+}
+
+/// The supervisor confirming an order was carried out, so it stops being handed back.
+async fn edge_control_ack(
+    State(state): State<ApiState>,
+    Json(req): Json<EdgeControlAckRequest>,
+) -> Result<Json<EdgeControlAckResponse>, axum::http::StatusCode> {
+    let edge_code = req.edge_id.trim().to_string();
+    if edge_code.is_empty() || req.request_id.trim().is_empty() {
+        return Err(axum::http::StatusCode::BAD_REQUEST);
+    }
+    if req.enrollment_token != state.edge_cfg.enroll_token {
+        return Err(axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    // Idempotent by construction: acking an order that is already complete matches no rows
+    // and still answers OK, because the supervisor's world is the same either way.
+    state
+        .client
+        .execute(
+            "UPDATE edge_control_command SET completed_at = now()
+             WHERE edge_code = $1 AND request_id = $2 AND completed_at IS NULL",
+            &[&edge_code, &req.request_id],
+        )
+        .await
+        .map_err(|e| {
+            error!("could not complete {}: {}", req.request_id, e);
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    info!(
+        "restart order {} confirmed by edge={}",
+        req.request_id, edge_code
+    );
+    Ok(Json(EdgeControlAckResponse { accepted: true }))
 }
 
 async fn edge_action(

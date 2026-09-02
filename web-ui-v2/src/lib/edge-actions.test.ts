@@ -15,7 +15,6 @@ describe("resetEdge", () => {
     const req: ResetEdgeRequest = { site_code: "plant-a", edge_code: "edge-1", reason: "manual reset from diagnostics panel" };
     const expected: ResetEdgeResponse = {
       accepted: true,
-      topic: "scada/plant-a/edge/edge-1/control/reset",
       request_id: "r1",
     };
     vi.mocked(postJson).mockResolvedValue(expected);
