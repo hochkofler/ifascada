@@ -7,6 +7,7 @@ use rumqttc::QoS;
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use tracing::{debug, warn};
@@ -125,6 +126,21 @@ pub enum PublishAttempt {
     Failed(String),
 }
 
+/// Whether the bridge currently has a live MQTT session with the broker.
+///
+/// Deliberately not named `ConnectionState`: `domain::ConnectionState` already means the
+/// state of a *device* connection (a scale on a serial port), and `mqtt_bridge` handles
+/// both concepts in the same file.
+///
+/// The outbox needs this because handing a message to the client is not the same as
+/// delivering it: an accepted message leaves the durable queue and lives only in the
+/// client's in-memory `pending` list until a session exists to carry it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrokerSession {
+    Live,
+    Down,
+}
+
 #[async_trait]
 pub trait OutboxPublisher: Send + Sync {
     async fn publish(
@@ -163,6 +179,10 @@ pub trait OutboxPublisher: Send + Sync {
 pub struct PersistentMqttOutbox {
     conn: Arc<Mutex<Connection>>,
     cfg: OutboxConfig,
+    /// Shared with every clone, so the bridge's event loop can publish the session state
+    /// once and every task that flushes observes it. Starts disconnected: nothing has been
+    /// handed to a broker until a ConnAck says otherwise.
+    connected: Arc<AtomicBool>,
 }
 
 impl PersistentMqttOutbox {
@@ -195,7 +215,24 @@ impl PersistentMqttOutbox {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             cfg,
+            connected: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Records whether a live broker session exists. Called by the bridge's event loop on
+    /// ConnAck and whenever the loop drops the connection; every clone of this outbox sees
+    /// the change.
+    pub fn set_broker_session(&self, state: BrokerSession) {
+        self.connected
+            .store(state == BrokerSession::Live, Ordering::Relaxed);
+    }
+
+    pub fn broker_session(&self) -> BrokerSession {
+        if self.connected.load(Ordering::Relaxed) {
+            BrokerSession::Live
+        } else {
+            BrokerSession::Down
+        }
     }
 
     pub async fn enqueue(
@@ -277,6 +314,9 @@ impl PersistentMqttOutbox {
         publisher: &P,
         max_batch: usize,
     ) -> anyhow::Result<usize> {
+        if self.broker_session() == BrokerSession::Down {
+            return Ok(0);
+        }
         let pending = self.load_pending(max_batch)?;
         let mut sent = 0usize;
         for raw in pending {
@@ -667,6 +707,7 @@ mod tests {
             fail_all: false,
             sent: TokioMutex::new(Vec::new()),
         };
+        outbox.set_broker_session(BrokerSession::Live);
         let sent = outbox.flush_pending(&pubr, 10).await.unwrap();
         assert_eq!(sent, 2);
         assert_eq!(outbox.len().await, 0);
@@ -688,6 +729,7 @@ mod tests {
             .await
             .unwrap();
 
+        outbox.set_broker_session(BrokerSession::Live);
         let sent = outbox
             .flush_pending(
                 &FakePublisher {
@@ -774,6 +816,7 @@ mod tests {
             fail_all: false,
             sent: TokioMutex::new(Vec::new()),
         };
+        outbox.set_broker_session(BrokerSession::Live);
         let sent = outbox.flush_pending(&pubr, 10).await.unwrap();
         assert_eq!(sent, 1);
         let delivered = pubr.sent.lock().await;
@@ -823,6 +866,7 @@ mod tests {
             fail_all: false,
             sent: TokioMutex::new(Vec::new()),
         };
+        outbox_new.set_broker_session(BrokerSession::Live);
         let sent = outbox_new.flush_pending(&pubr, 10).await.unwrap();
         assert_eq!(sent, 1);
         let delivered = pubr.sent.lock().await;
@@ -865,6 +909,7 @@ mod tests {
         // the sends fail fast, which is a different situation from the one under test.
         let opts = MqttOptions::new("outbox-backpressure-test", "127.0.0.1", 1883);
         let (client, _event_loop) = AsyncClient::new(opts, CHANNEL_CAPACITY);
+        outbox.set_broker_session(BrokerSession::Live);
 
         let flushed = tokio::time::timeout(
             std::time::Duration::from_secs(5),
@@ -875,6 +920,10 @@ mod tests {
         .unwrap();
 
         assert!(
+            flushed > 0,
+            "the flush must actually have published before hitting backpressure -- a zero              here means it returned for some other reason and the test proves nothing"
+        );
+        assert!(
             flushed < ROWS,
             "the channel holds {} and cannot have taken all {} rows",
             CHANNEL_CAPACITY,
@@ -884,6 +933,49 @@ mod tests {
             outbox.len().await,
             ROWS - flushed,
             "rows that did not fit must stay in the outbox for the next attempt"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+
+    /// While there is no live broker session the outbox must not hand anything to the
+    /// client, even though `try_publish` would happily accept it.
+    ///
+    /// `flush_pending` deletes a row as soon as the client *accepts* it, and `rumqttc`
+    /// keeps accepted-but-undelivered requests in an unbounded in-memory `pending` queue.
+    /// Draining while disconnected therefore moves messages out of the durable SQLite
+    /// outbox and into volatile memory -- weakening exactly the guarantee the outbox
+    /// exists to provide, under exactly the conditions it exists for.
+    #[tokio::test]
+    async fn test_flush_pending_leaves_the_outbox_untouched_while_disconnected() {
+        let path = temp_file("mqtt_outbox_disconnected");
+        let outbox = PersistentMqttOutbox::new(&path, OutboxConfig::default()).unwrap();
+        outbox
+            .enqueue(
+                OutboxMessageKind::Audit,
+                "topic/a".to_string(),
+                QoS::AtLeastOnce,
+                false,
+                b"payload".to_vec(),
+            )
+            .await
+            .unwrap();
+
+        let publisher = FakePublisher {
+            fail_all: false,
+            sent: TokioMutex::new(Vec::new()),
+        };
+
+        outbox.set_broker_session(BrokerSession::Down);
+
+        let flushed = outbox.flush_pending(&publisher, 10).await.unwrap();
+
+        assert_eq!(flushed, 0, "nothing may be handed over while disconnected");
+        assert_eq!(outbox.len().await, 1, "the row must stay queued");
+        assert!(
+            publisher.sent.lock().await.is_empty(),
+            "the publisher must not have been called at all"
         );
 
         let _ = std::fs::remove_file(path);

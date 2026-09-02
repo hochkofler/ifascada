@@ -7,7 +7,7 @@ use crate::action_orchestrator::{ActionOrchestrator, ActionRequest, ActionRuntim
 use crate::bootstrap;
 use crate::mqtt_outbox::{
     OutboxConfig, OutboxMessageKind, OutboxPublisher, OutboxSecurity, OutboxStats,
-    PersistentMqttOutbox, PublishAttempt,
+    BrokerSession, PersistentMqttOutbox, PublishAttempt,
 };
 use domain::id::TagId;
 use domain::AutomationSpec;
@@ -1761,6 +1761,7 @@ pub async fn run_mqtt_bridge(
                 }
             }
             Ok(Event::Incoming(Incoming::ConnAck(connack))) => {
+                outbox.set_broker_session(BrokerSession::Live);
                 if connack.session_present {
                     debug!("mqtt (re)connected with session_present=true; subscriptions retained by broker");
                 } else {
@@ -1785,6 +1786,10 @@ pub async fn run_mqtt_bridge(
             }
             Ok(_) => {}
             Err(e) => {
+                // No session until the next ConnAck. Draining the outbox now would move
+                // rows out of durable storage and into rumqttc's in-memory pending queue,
+                // which is the opposite of what the outbox is for.
+                outbox.set_broker_session(BrokerSession::Down);
                 let stats = outbox.stats().await;
                 warn!(
                     "MQTT event loop error: {}; retrying poll in 1s (outbox_depth={}, oldest_age_secs={:?})",
