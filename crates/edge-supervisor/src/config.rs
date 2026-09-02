@@ -14,6 +14,26 @@ pub const DEFAULT_WAIT_SECS: u64 = 25;
 /// has always done, so the supervisor is not a behaviour change in this respect.
 pub const DEFAULT_RESTART_DELAY_SECS: u64 = 5;
 
+/// Reads an `edge.env` into key/value pairs, accepting exactly what `run-edge.ps1`
+/// accepted: comments and lines with no `=` are skipped, and only the first `=` splits.
+pub fn parse_env_file(content: &str) -> HashMap<String, String> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.starts_with('#') {
+                return None;
+            }
+            let (k, v) = line.split_once('=')?;
+            let k = k.trim();
+            if k.is_empty() {
+                return None;
+            }
+            Some((k.to_string(), v.trim().to_string()))
+        })
+        .collect()
+}
+
 /// Everything needed to ask central for orders. Absent when the host has not been given
 /// central's address or a token.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +48,8 @@ pub struct ControlConfig {
 pub struct SupervisorConfig {
     pub agent_path: PathBuf,
     pub restart_delay: Duration,
+    /// Where the agent's stdout and stderr are appended. `None` discards them.
+    pub log_dir: Option<PathBuf>,
     /// `None` means remote control is disabled and the supervisor only babysits the child.
     pub control: Option<ControlConfig>,
 }
@@ -63,6 +85,7 @@ impl SupervisorConfig {
                 .map(PathBuf::from)
                 .unwrap_or(default_agent_path),
             restart_delay: Duration::from_secs(DEFAULT_RESTART_DELAY_SECS),
+            log_dir: get("EDGE_SUPERVISOR_LOG_DIR").map(PathBuf::from),
             control,
         }
     }
@@ -158,4 +181,60 @@ mod tests {
             "an unparseable value must fall back, not disable control"
         );
     }
+
+    /// `run-edge.ps1` wrote the agent's output to edge.out.log / edge.err.log, and
+    /// `scripts/edge-diagnose-and-restart.ps1` reads edge.err.log to report recent port
+    /// and protocol errors. Dropping those files would quietly break the diagnosis path.
+    #[test]
+    fn the_log_directory_is_carried_through_when_configured() {
+        let mut pairs = full();
+        pairs.push(("EDGE_SUPERVISOR_LOG_DIR", "C:/ProgramData/ifascada/edge/logs"));
+        let cfg = SupervisorConfig::from_vars(&vars(&pairs), PathBuf::from("edge-agent.exe"));
+        assert_eq!(
+            cfg.log_dir,
+            Some(PathBuf::from("C:/ProgramData/ifascada/edge/logs"))
+        );
+    }
+
+    #[test]
+    fn without_a_log_directory_the_agent_output_is_discarded_rather_than_lost_in_a_console() {
+        let cfg = SupervisorConfig::from_vars(&vars(&full()), PathBuf::from("edge-agent.exe"));
+        assert_eq!(cfg.log_dir, None);
+    }
+
+
+    /// `run-edge.ps1` loaded `edge.env` into the process before launching the agent, and
+    /// the agent reads all of its configuration from there. The supervisor is the launcher
+    /// now, so it has to do the same or the agent starts with nothing.
+    ///
+    /// The accepted shape matches what the PowerShell did: skip comments and any line
+    /// without an `=`, split on the first `=` only.
+    #[test]
+    fn an_env_file_is_parsed_the_way_run_edge_ps1_parsed_it() {
+        let content = "# la config del edge
+EDGE_AGENT=lcc01
+
+MQTT_HOST=127.0.0.1
+  EDGE_SITE = plant-a
+MQTT_OUTBOX_ENCRYPTION_SECRET=abc=def==
+esta linea no tiene igual
+   # comentario indentado
+";
+        let parsed = parse_env_file(content);
+
+        assert_eq!(parsed.get("EDGE_AGENT").map(String::as_str), Some("lcc01"));
+        assert_eq!(parsed.get("MQTT_HOST").map(String::as_str), Some("127.0.0.1"));
+        assert_eq!(
+            parsed.get("EDGE_SITE").map(String::as_str),
+            Some("plant-a"),
+            "keys and values are trimmed"
+        );
+        assert_eq!(
+            parsed.get("MQTT_OUTBOX_ENCRYPTION_SECRET").map(String::as_str),
+            Some("abc=def=="),
+            "only the first = separates; secrets often end in padding"
+        );
+        assert_eq!(parsed.len(), 4, "comments and junk lines must be skipped");
+    }
+
 }

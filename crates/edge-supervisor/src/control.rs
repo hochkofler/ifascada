@@ -144,6 +144,9 @@ pub mod fake_central {
         HoldThenEmpty(std::time::Duration),
         /// Answer with an HTTP error status.
         Status(u16),
+        /// Hand over an order, then refuse to accept the acknowledgement. Separates
+        /// "the restart happened" from "central knows it happened".
+        OrderThenFailingAck { request_id: String },
     }
 
     #[derive(Debug, Default)]
@@ -190,6 +193,10 @@ pub mod fake_central {
                     StatusCode::from_u16(*code).unwrap(),
                     Json(serde_json::json!({})),
                 ),
+                Reply::OrderThenFailingAck { request_id } => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({ "kind": "restart", "request_id": request_id })),
+                ),
             }
         }
 
@@ -200,6 +207,7 @@ pub mod fake_central {
             ctx.seen.lock().unwrap().ack_bodies.push(body);
             match ctx.reply {
                 Reply::Status(code) => StatusCode::from_u16(code).unwrap(),
+                Reply::OrderThenFailingAck { .. } => StatusCode::SERVICE_UNAVAILABLE,
                 _ => StatusCode::OK,
             }
         }

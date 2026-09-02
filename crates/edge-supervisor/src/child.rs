@@ -45,6 +45,9 @@ pub struct ChildSpec {
     /// want; production points both at the same log files `run-edge.ps1` has always used.
     pub out_log: Option<PathBuf>,
     pub err_log: Option<PathBuf>,
+    /// Variables handed to the child on top of what the supervisor inherited. This is how
+    /// `edge.env` reaches the agent now that the supervisor is its launcher.
+    pub env: Vec<(OsString, OsString)>,
 }
 
 impl ChildSpec {
@@ -54,6 +57,7 @@ impl ChildSpec {
             args: args.into_iter().map(Into::into).collect(),
             out_log: None,
             err_log: None,
+            env: Vec::new(),
         }
     }
 }
@@ -85,6 +89,7 @@ impl AgentChild {
 
         let mut cmd = Command::new(&self.spec.program);
         cmd.args(&self.spec.args);
+        cmd.envs(self.spec.env.iter().map(|(k, v)| (k, v)));
         cmd.stdin(Stdio::null());
         cmd.stdout(Self::sink(self.spec.out_log.as_ref())?);
         cmd.stderr(Self::sink(self.spec.err_log.as_ref())?);
@@ -397,6 +402,46 @@ mod tests {
         );
 
         let _ = child.kill();
+    }
+
+
+    /// The agent reads every setting it has from environment variables that `edge.env`
+    /// supplies. The supervisor is what launches it now, so if these do not reach the
+    /// child the agent comes up with no broker, no site and no identity.
+    ///
+    /// Observed through the log redirection because that is the channel the supervisor
+    /// already gives the child.
+    #[test]
+    fn the_child_receives_the_environment_it_was_given() {
+        let log = std::env::temp_dir().join(format!(
+            "edge_sup_env_{}.log",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&log);
+
+        #[cfg(windows)]
+        let mut spec = ChildSpec::new("cmd", ["/c", "echo", "%EDGE_TEST_MARKER%"]);
+        #[cfg(not(windows))]
+        let mut spec = ChildSpec::new("sh", ["-c", "echo $EDGE_TEST_MARKER"]);
+
+        spec.out_log = Some(log.clone());
+        spec.env
+            .push(("EDGE_TEST_MARKER".into(), "lcc01-marker".into()));
+
+        let mut child = AgentChild::new(spec);
+        child.spawn().expect("spawn failed");
+        assert!(wait_until(|| !child.is_running(), Duration::from_secs(5)));
+
+        let written = std::fs::read_to_string(&log).unwrap_or_default();
+        let _ = std::fs::remove_file(&log);
+        assert!(
+            written.contains("lcc01-marker"),
+            "the child did not see the variable; it wrote {:?}",
+            written
+        );
     }
 
 }
