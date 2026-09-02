@@ -3,3 +3,4 @@
 
 pub mod child;
 pub mod config;
+pub mod control;
