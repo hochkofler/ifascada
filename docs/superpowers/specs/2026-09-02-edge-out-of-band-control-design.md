@@ -32,13 +32,18 @@ Linux.
 ## Decisiones tomadas
 
 1. **Solo fuera de banda.** `/api/edges/reset` deja de publicar en MQTT y solo encola la
-   orden. Un único camino, siempre funciona, con hasta 10 s de latencia. Se descartó el
+   orden. Un único camino y siempre funciona. Se descartó el
    esquema mixto (MQTT + fuera de banda) porque puede reiniciar dos veces, y los dos botones
    separados porque obligan al operador a entender una distinción que es nuestra, no suya.
 2. **Windows primero, Bolivia después.** `lcc01` y `lcc02` son los que fallaron y están a
    mano. Bolivia entra cuando el supervisor haya rodado unos días.
 3. **Un binario, no un script.** El requisito es independencia del sistema operativo y en
    Bolivia no hay PowerShell.
+4. **Long-poll, no sondeo repetido.** El supervisor deja un pedido esperando en central en
+   vez de preguntar cada N segundos. En reposo no genera tráfico ni consultas, y la orden
+   llega en menos de un segundo. Se descartó el sondeo repetido porque hacer un pedido cada
+   10 s para que el 99,99% devuelvan "nada" es desperdicio evitable; y se descartaron SSE,
+   WebSocket y MQTT por lo que se explica en «Transporte».
 
 ## Arquitectura
 
@@ -63,8 +68,8 @@ Miembro del workspace, binario `edge-supervisor`. Tres responsabilidades:
 
 1. **Ciclo de vida del hijo.** Lanza `edge-agent`, lo relanza si termina, con la misma
    espera de 5 s que hoy tiene `run-edge.ps1`. Hereda el `edge.env` igual que hoy.
-2. **Sondeo de órdenes.** Cada 10 s pregunta a central si hay una orden pendiente para su
-   edge.
+2. **Espera de órdenes.** Mantiene un pedido abierto contra central, que se resuelve en
+   cuanto aparece una orden para su edge o vence a los ~25 s, y se vuelve a lanzar.
 3. **Ejecución y confirmación.** Si la hay: mata al hijo, lo relanza, y le confirma a
    central que se ejecutó.
 
@@ -76,9 +81,9 @@ está definido para el agente:
 | Variable | Uso | Ya existe |
 |---|---|---|
 | `EDGE_CONFIG_URL` | Base de la API de central | Sí |
-| `EDGE_ENROLL_TOKEN` | Autenticación del sondeo | Sí |
+| `EDGE_ENROLL_TOKEN` | Autenticación del pedido | Sí |
 | `EDGE_AGENT` | Identifica al edge ante central | Sí |
-| `EDGE_SUPERVISOR_POLL_SECS` | Cadencia del sondeo, por defecto 10 | No |
+| `EDGE_SUPERVISOR_WAIT_SECS` | Cuánto espera central antes de responder vacío, por defecto 25 | No |
 | `EDGE_SUPERVISOR_AGENT_PATH` | Ruta del ejecutable del agente | No |
 
 Las tres primeras se reusan tal cual, así que un host ya instalado no necesita configuración
@@ -100,9 +105,44 @@ los mismos puertos serie.
 
 Esto además es lo que hace que el updater existente siga funcionando (ver más abajo).
 
-## Transporte: HTTP a central
+## Transporte: long-poll HTTP a central
 
 No MQTT. El punto entero es no compartir destino con el event loop que se cuelga.
+
+### Por qué long-poll y no una conexión persistente
+
+Central ya expone SSE (`/api/ops/events/stream`, `/api/stream/events`), así que un push
+clásico sería infraestructura disponible. Se descarta igual, y la razón es específica de
+este sistema: **el modo de fallo que ya sufrió dos veces es una conexión de larga vida que
+ambos extremos creen viva y está muerta.** El 2026-08-18 fueron 1 h 13 min de pérdida total
+de datos con el log del edge en verde; el 2026-09-02, 25 minutos. Los hallazgos A1, A2 y A4
+de la auditoría siguen abiertos del lado edge.
+
+Apoyar el mecanismo de recuperación sobre una conexión de ese tipo lo haría heredar la clase
+de fallo de la que existe para recuperarnos, y obligaría a construirle latido, watchdog de
+actividad, reconexión y backoff — la maquinaria que central tiene en `BrokerActivityWatch` y
+el edge no. Es demasiada superficie en el único componente que no puede fallar.
+
+El long-poll no tiene ese problema, y la diferencia es exactamente ésta:
+
+| | SSE / WebSocket / MQTT | Long-poll |
+|---|---|---|
+| La conexión *debería* durar | para siempre | ~25 s |
+| Que se corte es | una anomalía a detectar | lo normal, ocurre siempre |
+| Si muere en silencio | nadie se entera | el timeout la cierra igual y se rehace |
+| Necesita latido y watchdog | sí | no |
+
+Morir es su comportamiento normal, así que no hay nada que detectar.
+
+**Propiedad que lo hace seguro:** si el aviso interno de central no llegara —&nbsp;por un
+reinicio, por un despliegue, por lo que sea&nbsp;— el pedido vence igual a los 25 s y vuelve
+a consultar la base. La corrección **no depende de que el push funcione**: el aviso solo
+mejora la latencia. En el peor caso degrada a un sondeo de 25 s, nunca a silencio.
+
+**Descartado explícitamente:** que central abra la conexión hacia el edge. Invierte la
+dirección y exige que el edge acepte conexiones entrantes, con firewall y NAT en el medio.
+`lcc02` ni siquiera acepta SSH — comprobado el 2026-09-02. En redes de planta la dirección
+edge→central es la que funciona.
 
 Ya existe el precedente exacto en `crates/edge-agent/src/bootstrap.rs`: el agente sondea
 `POST /api/edge/config/check` con `edge_id` en el cuerpo y la cabecera
@@ -142,8 +182,14 @@ recibió y no la confirmó" (murió ejecutándola), y esas dos cosas se investig
 
 ### Endpoints
 
-- `POST /api/edge/control/pending` — cuerpo `{ edge_id, enrollment_token }`. Devuelve la
-  orden pendiente más antigua o vacío. Marca `delivered_at` si estaba en null.
+- `POST /api/edge/control/pending` — cuerpo `{ edge_id, enrollment_token }`. **Retiene el
+  pedido.** Primero consulta la base: si hay orden pendiente responde en el acto. Si no,
+  espera con `tokio::select!` entre un `tokio::sync::Notify` por edge y un timeout de 25 s;
+  al despertar por cualquiera de los dos vuelve a consultar la base y responde con la orden
+  o vacío. Marca `delivered_at` si estaba en null.
+
+  El `Notify` vive en memoria y se dispara al insertar una orden. No es la fuente de verdad:
+  el timeout garantiza que la base se reconsulte pase lo que pase.
 - `POST /api/edge/control/ack` — cuerpo `{ edge_id, enrollment_token, request_id }`. Marca
   `completed_at`. Idempotente: reconfirmar una orden ya confirmada responde OK sin cambiar
   nada.
@@ -166,8 +212,8 @@ Sin cambios de comportamiento. `use-edge-reset.ts` manda el comando, sondea 15 v
 `timed-out-no-recovery`. Esa lógica sigue siendo correcta con el transporte nuevo: mide
 recuperación real, no entrega del mensaje.
 
-La ventana de 30 s sigue alcanzando: 10 s de sondeo del supervisor + reinicio del agente
-entra cómodo.
+La ventana de 30 s queda holgada: la orden llega al supervisor en menos de un segundo, y lo
+único que consume tiempo es el reinicio del agente.
 
 El único ajuste es quitar `topic` del tipo de la respuesta en `api-schemas`.
 
@@ -201,11 +247,13 @@ agente ya tolera reinicios duros; es el procedimiento que se aplicó a mano el 2
 
 | Situación | Qué pasa |
 |---|---|
-| Central caído cuando el supervisor sondea | El sondeo falla, se registra en debug y se reintenta a los 10 s. El agente sigue corriendo. |
+| Central caído o reiniciándose | El pedido falla o se corta; se registra en debug y se relanza tras una espera corta con backoff. El agente sigue corriendo. |
+| El `Notify` no llega (reinicio de central, despliegue) | El pedido vence a los 25 s, reconsulta la base y encuentra la orden igual. Solo se pierde latencia. |
+| Un intermediario corta conexiones ociosas antes de 25 s | El pedido termina antes de tiempo y se relanza. Indistinguible del vencimiento normal. Si pasara seguido, se baja `EDGE_SUPERVISOR_WAIT_SECS`. |
 | El supervisor muere ejecutando la orden | La orden queda con `delivered_at` y sin `completed_at`. Al volver, la vuelve a tomar y la ejecuta. Un reinicio de más es aceptable; uno de menos no. |
 | El agente no arranca tras el reinicio | El supervisor lo reintenta cada 5 s, igual que hoy. La UI reporta `timed-out-no-recovery` porque `last_seen_at` no avanza. |
 | Dos órdenes encoladas para el mismo edge | Se sirven de a una, la más antigua primero. |
-| El supervisor no corre | No hay quien sondee. `delivered_at` en null lo delata. |
+| El supervisor no corre | No hay quien espere la orden. `delivered_at` en null lo delata. |
 
 ## Pruebas
 
@@ -215,6 +263,10 @@ agente ya tolera reinicios duros; es el procedimiento que se aplicó a mano el 2
   que se relanzó. En Windows, verificar además que cerrar el Job Object se lleva al hijo.
 - **Endpoints de central:** pendiente devuelve la más antigua, marca `delivered_at`, el ack
   es idempotente, y `/api/edges/reset` encola en vez de publicar.
+- **Long-poll:** con la base vacía el pedido no responde de inmediato; insertar una orden
+  mientras está esperando lo despierta y responde con ella; sin `Notify` alguno, vence y
+  responde vacío dentro del plazo. Esa última prueba es la que fija la propiedad de que la
+  corrección no depende del aviso.
 - **Contrato con la UI:** los tests existentes de `api-client` y `edge-actions` cubren la
   forma de la petición; se ajustan si cambia `EdgeResetResponse`.
 
@@ -233,8 +285,9 @@ no como un fallo silencioso.
 ## Riesgos abiertos
 
 - **El supervisor se vuelve un punto único nuevo.** Si se cuelga él, nadie reinicia al
-  agente. Se mitiga manteniéndolo deliberadamente chico y sin estado propio: sondear, matar,
+  agente. Se mitiga manteniéndolo deliberadamente chico y sin estado propio: esperar, matar,
   lanzar. Toda la lógica que pueda vivir en central, vive en central.
-- **Latencia de 10 s** en el caso común, contra el reinicio casi inmediato del MQTT. Es el
-  precio de la decisión 1 y se consideró aceptable.
+- **Central sostiene una conexión abierta por edge.** Con el parque actual son tres, y axum
+  las maneja sin esfuerzo. A escalas mucho mayores habría que revisar límites de descriptores
+  y de conexiones del reverse proxy, si llega a haber uno delante.
 - El token compartido, ya anotado arriba.
