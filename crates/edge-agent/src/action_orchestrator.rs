@@ -406,6 +406,53 @@ fn compact_equipment_ticket_line(equipment: &str, ticket: &str) -> Result<String
 
 #[cfg(test)]
 mod tests {
+    use super::{probe_share_host, unc_host};
+
+    /// Regression test for a check that could never pass. `connection.check` used to
+    /// run `if exist "\\host\share"`, a FILESYSTEM existence test -- and a printer
+    /// share is not a filesystem path, so it reported failure for a printer that prints
+    /// perfectly well.
+    ///
+    /// Seen in production on lcc01: every print automation logged `connection.check ->
+    /// Failed` immediately before the print itself succeeded, which makes a working
+    /// printer look broken in the action history.
+    #[test]
+    fn a_unc_path_yields_the_host_to_probe() {
+        assert_eq!(
+            unc_host(r"\\192.168.103.154\IFA-SCADA-TMU220-RAW"),
+            Some("192.168.103.154".to_string())
+        );
+        assert_eq!(
+            unc_host(r"//server01/printers/tickets"),
+            Some("server01".to_string()),
+            "forward slashes and deeper paths still name the same host"
+        );
+        assert_eq!(unc_host("not-a-unc-path"), None);
+        assert_eq!(unc_host(""), None);
+    }
+
+    #[tokio::test]
+    async fn probing_a_reachable_host_succeeds() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        assert!(probe_share_host("127.0.0.1", port, 4000).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn probing_an_unreachable_host_reports_the_failure() {
+        // Port 1 is reserved and nothing listens there.
+        let err = probe_share_host("127.0.0.1", 1, 2000).await.unwrap_err();
+        assert!(
+            err.contains("127.0.0.1"),
+            "the message must name what could not be reached, got: {}",
+            err
+        );
+    }
+
     use super::compact_equipment_ticket_line;
 
     #[test]
@@ -1372,35 +1419,62 @@ async fn print_to_windows_share(bytes: &[u8], share: &str) -> Result<(), String>
     }
 }
 
-async fn check_windows_share_access(share: &str, timeout_ms: u64) -> Result<(), String> {
-    #[cfg(not(windows))]
-    {
-        let _ = share;
-        let _ = timeout_ms;
-        return Err("windows printer share check is only supported on Windows edge runtime".to_string());
-    }
+/// The SMB port a Windows print server answers on.
+const PRINT_SERVER_SMB_PORT: u16 = 445;
 
-    #[cfg(windows)]
+/// The server name out of a UNC path: `\\host\share` -> `host`.
+fn unc_host(share: &str) -> Option<String> {
+    let normalized = normalize_windows_share(share)?;
+    normalized
+        .trim_start_matches('\\')
+        .split('\\')
+        .next()
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .map(ToString::to_string)
+}
+
+/// Whether the print server answers on the SMB port.
+async fn probe_share_host(host: &str, port: u16, timeout_ms: u64) -> Result<(), String> {
+    let addr = format!("{}:{}", host, port);
+    match tokio::time::timeout(
+        Duration::from_millis(timeout_ms.max(1000)),
+        TcpStream::connect(addr.clone()),
+    )
+    .await
     {
-        let share = normalize_windows_share(share)
-            .ok_or_else(|| format!("invalid windows share path '{}'", share))?;
-        let check_cmd = format!("if exist \"{}\" (exit /b 0) else (exit /b 1)", share);
-        let run = Command::new("cmd").arg("/C").arg(check_cmd).output();
-        let out = tokio::time::timeout(Duration::from_millis(timeout_ms.max(4000)), run)
-            .await
-            .map_err(|_| format!("connection.check timeout for windows share '{}' after {} ms", share, timeout_ms))?
-            .map_err(|e| format!("failed to run windows share check: {}", e))?;
-        if out.status.success() {
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            Err(format!(
-                "windows share check failed '{}' stderr='{}' stdout='{}'",
-                share,
-                stderr.trim(),
-                stdout.trim()
-            ))
-        }
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(format!(
+            "cannot reach print server '{}': {}",
+            addr, e
+        )),
+        Err(_) => Err(format!(
+            "timeout reaching print server '{}' after {} ms",
+            addr, timeout_ms
+        )),
     }
+}
+
+/// Checks that the machine hosting a Windows printer share is reachable.
+///
+/// This used to run `if exist "\\host\share"`, which is a FILESYSTEM existence
+/// test. A printer share is not a filesystem path, so that check reported failure for
+/// printers that print perfectly well -- in production every print automation logged a
+/// failed `connection.check` right before the print succeeded, making a healthy printer
+/// look broken.
+///
+/// What this verifies, honestly: the print server answers on SMB. It does NOT prove the
+/// share exists or accepts jobs -- the only way to prove that is to send one, and a
+/// pre-flight check must not print. Reaching the server is the strongest claim available
+/// without emitting paper, and it is strictly better than a test that could never pass.
+///
+/// Now cross-platform too: it is a TCP probe, so a Linux edge can check a Windows print
+/// server instead of failing with 'only supported on Windows edge runtime'.
+async fn check_windows_share_access(share: &str, timeout_ms: u64) -> Result<(), String> {
+    let share = normalize_windows_share(share)
+        .ok_or_else(|| format!("invalid windows share path '{}'", share))?;
+    let host = unc_host(&share).ok_or_else(|| {
+        format!("cannot determine the print server from '{}'", share)
+    })?;
+    probe_share_host(&host, PRINT_SERVER_SMB_PORT, timeout_ms).await
 }
