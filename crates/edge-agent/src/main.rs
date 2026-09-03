@@ -4,6 +4,7 @@ use infrastructure::drivers::modbus_rtu::ModbusRtuFactory;
 use infrastructure::drivers::modbus_tcp::ModbusTcpFactory;
 use infrastructure::drivers::serial_ascii::SerialAsciiFactory;
 use infrastructure::drivers::simulator::SimulatorFactory;
+mod broker_watch;
 mod ticket_sequence;
 use mqtt_bridge::{MqttBridgeConfig, MqttBridgeExit, run_mqtt_bridge};
 use std::sync::Arc;

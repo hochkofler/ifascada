@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use crate::broker_watch::{BrokerActivityWatch, STALE_KEEP_ALIVE_MULTIPLIER};
 use std::{fs, path::Path};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex as TokioMutex;
@@ -994,6 +995,10 @@ fn build_alert_message(
     }
 }
 
+/// MQTT-level keep-alive for the edge's broker session. Shared with the staleness
+/// watchdog so the two can never drift apart.
+const MQTT_KEEP_ALIVE: Duration = Duration::from_secs(10);
+
 #[async_trait]
 impl OutboxPublisher for AsyncClient {
     async fn publish(
@@ -1205,7 +1210,7 @@ pub async fn run_mqtt_bridge(
         config.broker_host, config.broker_port, config.client_id
     );
     let mut opts = MqttOptions::new(&config.client_id, &config.broker_host, config.broker_port);
-    opts.set_keep_alive(Duration::from_secs(10));
+    opts.set_keep_alive(MQTT_KEEP_ALIVE);
     apply_edge_mqtt_security_from_env(&mut opts)?;
     let (client, mut event_loop): (AsyncClient, EventLoop) = AsyncClient::new(opts, 100);
     let cmd_topic = config.command_topic();
@@ -1670,6 +1675,11 @@ pub async fn run_mqtt_bridge(
         }
     });
 
+    let mut watch = BrokerActivityWatch::new(MQTT_KEEP_ALIVE, Instant::now());
+    // Mirrors the watch's own last_activity purely so the log can say how long the
+    // silence actually was; the watch keeps its field private.
+    let mut watch_last_seen = Instant::now();
+
     loop {
         if let Ok(flushed) = outbox.flush_pending(&client, flush_batch).await {
             if flushed > 0 {
@@ -1677,7 +1687,54 @@ pub async fn run_mqtt_bridge(
             }
         }
         let mut restart_requested = false;
-        match event_loop.poll().await {
+
+        // Presume the session dead after too long a silence, even though nothing
+        // errored. `poll()` can keep succeeding on a half-open socket -- it still
+        // emits outgoing PingReq, because writing into a dead socket's send buffer
+        // does not fail -- so only inbound traffic proves the broker is still there.
+        let now = Instant::now();
+        if watch.should_force_reconnect(now) {
+            warn!(
+                "no mqtt broker activity for {}s (> keep_alive*{}); presuming the session dead and reconnecting",
+                now.saturating_duration_since(watch_last_seen).as_secs(),
+                STALE_KEEP_ALIVE_MULTIPLIER
+            );
+            outbox.set_broker_session(BrokerSession::Down);
+            event_loop.clean();
+            watch.record_activity(now);
+            watch_last_seen = now;
+            continue;
+        }
+
+        // The timeout is the *remaining* time to the staleness deadline, never a fixed
+        // interval, so it only ever fires where the connection was going to be torn
+        // down anyway -- cancelling poll() mid-flight can then never leave a
+        // still-in-use connection half-written.
+        let polled = match tokio::time::timeout(watch.next_check_in(now), event_loop.poll()).await
+        {
+            Ok(polled) => polled,
+            Err(_) => {
+                warn!(
+                    "mqtt broker silent for {}s while polling (> keep_alive*{}); forcing reconnect",
+                    watch.stale_after().as_secs(),
+                    STALE_KEEP_ALIVE_MULTIPLIER
+                );
+                outbox.set_broker_session(BrokerSession::Down);
+                event_loop.clean();
+                let woke = Instant::now();
+                watch.record_activity(woke);
+                watch_last_seen = woke;
+                continue;
+            }
+        };
+
+        if matches!(&polled, Ok(Event::Incoming(_))) {
+            let heard = Instant::now();
+            watch.record_activity(heard);
+            watch_last_seen = heard;
+        }
+
+        match polled {
             Ok(Event::Incoming(Incoming::Publish(packet))) => {
                 debug!(
                     "mqtt incoming topic='{}' bytes={} qos={:?} retain={}",
