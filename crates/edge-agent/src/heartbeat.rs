@@ -10,7 +10,12 @@
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// How often the beat is written. Every loop turn would mean a file write per MQTT packet.
+/// Lower bound on how often the beat is written. Every loop turn would mean a file write
+/// per MQTT packet, so this throttles it -- but the beat can only be written WHEN THE LOOP
+/// TURNS, so the real cadence is whichever is slower. Idle, that is the MQTT keep-alive
+/// (~10s, measured in production on 2026-09-03); worst case it is however long the session
+/// watchdog lets  park. Anyone tuning the supervisor's staleness threshold needs
+/// this number, not the 5 below.
 pub const BEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Whether enough time has passed to write another beat.
