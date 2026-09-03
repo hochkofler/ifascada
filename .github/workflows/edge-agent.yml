@@ -64,7 +64,7 @@ jobs:
             exit 0
           }
           $changed = git diff --name-only "$prevTag" "${{ github.ref_name }}"
-          $relevant = $changed | Where-Object { $_ -match '^(crates/(domain|application|infrastructure|edge-agent)/|Cargo\.(toml|lock)$|deploy/edge-1\.0\.0-runtime/)' }
+          $relevant = $changed | Where-Object { $_ -match '^(crates/(domain|application|infrastructure|edge-agent|edge-supervisor)/|Cargo\.(toml|lock)$|deploy/edge-1\.0\.0-runtime/)' }
           if (-not $relevant) {
             Write-Error "Tag ${{ github.ref_name }} does not change anything relevant to edge-agent since $prevTag -- refusing to build/release a no-op release."
             exit 1
