@@ -27,8 +27,13 @@ El agente escribe un latido **desde el bucle del bridge**, no desde una tarea ap
 hay que probar vivo es justo ese bucle. Un latido emitido desde otro lado podría seguir
 latiendo con el bucle muerto, que es el fallo que esto existe para atrapar.
 
-- Se escribe cada 5 s, con los milisegundos de epoch **dentro** del archivo (en Windows el
-  `mtime` puede llegar tarde, y tener el número adentro deja saber *cuán* viejo es).
+- Se escribe **como mucho** cada 5 s, con los milisegundos de epoch **dentro** del archivo
+  (en Windows el `mtime` puede llegar tarde, y tener el número adentro deja saber *cuán*
+  viejo es). La cadencia real está acotada por cuándo el bucle da una vuelta: en reposo eso
+  es cada ~10 s (el keep-alive de MQTT), y en el peor caso 15 s (lo que el watchdog de
+  sesión deja estacionar el `poll`). **Medido en producción el 2026-09-03: ~10 s en los dos
+  hosts.** Muy lejos del umbral de 60 s, pero el número importa si alguna vez se ajusta ese
+  umbral.
 - El supervisor reinicia el agente si el latido pasa de **60 s**.
 - **90 s de gracia desde cada lanzamiento**: sin eso, un agente recién arrancado —&nbsp;que
   todavía no escribió nada&nbsp;— sería reiniciado de inmediato, en un bucle indistinguible
