@@ -4,6 +4,8 @@ use infrastructure::drivers::modbus_rtu::ModbusRtuFactory;
 use infrastructure::drivers::modbus_tcp::ModbusTcpFactory;
 use infrastructure::drivers::serial_ascii::SerialAsciiFactory;
 use infrastructure::drivers::simulator::SimulatorFactory;
+mod broker_watch;
+mod heartbeat;
 mod ticket_sequence;
 use mqtt_bridge::{MqttBridgeConfig, MqttBridgeExit, run_mqtt_bridge};
 use std::sync::Arc;
@@ -143,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "edge-agent-01".to_string()),
             outbox_path: std::env::var("MQTT_OUTBOX_PATH")
                 .unwrap_or_else(|_| "./data/mqtt_outbox.db".to_string()),
+            heartbeat_path: Some(resolve_heartbeat_path()),
             ticket_sequence_path: std::env::var("EDGE_TICKET_SEQUENCE_PATH")
                 .unwrap_or_else(|_| "./data/ticket_sequence.db".to_string()),
             outbox_flush_batch: std::env::var("MQTT_OUTBOX_FLUSH_BATCH")
@@ -270,6 +273,26 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Where the agent writes its heartbeat.
+///
+/// Defaults to sitting beside the MQTT outbox, so it lands in the same DataRoot the
+/// installer already creates and the supervisor already knows about, without needing a new
+/// path configured on every host.
+fn resolve_heartbeat_path() -> std::path::PathBuf {
+    if let Ok(explicit) = std::env::var("EDGE_HEARTBEAT_PATH") {
+        let explicit = explicit.trim();
+        if !explicit.is_empty() {
+            return std::path::PathBuf::from(explicit);
+        }
+    }
+    let outbox = std::env::var("MQTT_OUTBOX_PATH")
+        .unwrap_or_else(|_| "./data/mqtt_outbox.db".to_string());
+    std::path::Path::new(&outbox)
+        .parent()
+        .map(|dir| dir.join("edge.heartbeat"))
+        .unwrap_or_else(|| std::path::PathBuf::from("edge.heartbeat"))
 }
 
 fn build_env_auto_print_automations(

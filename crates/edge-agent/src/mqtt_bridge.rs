@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime};
+use crate::broker_watch::{BrokerActivityWatch, STALE_KEEP_ALIVE_MULTIPLIER};
 use std::{fs, path::Path};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex as TokioMutex;
@@ -37,6 +39,9 @@ pub struct MqttBridgeConfig {
     pub outbox_path: String,
     pub ticket_sequence_path: String,
     pub outbox_flush_batch: usize,
+    /// Where the agent writes its proof of life for the supervisor. `None` disables it,
+    /// which leaves the supervisor able to notice only an agent that exits.
+    pub heartbeat_path: Option<PathBuf>,
     pub outbox_max_messages: usize,
     pub outbox_active_key_id: String,
     pub outbox_prev_key_id: Option<String>,
@@ -252,6 +257,10 @@ pub struct EdgeHealthMqttMessage {
     pub audit_publish_fail_total: u64,
     pub outbox_enqueued_total: u64,
     pub outbox_flushed_total: u64,
+    /// QoS1 PUBACKs seen from the broker. Unlike everything queued, this is proof the
+    /// other side received something: a gap that stops growing while messages keep
+    /// being queued is a stuck link, visible without reading the broker's own log.
+    pub broker_acked_total: u64,
     pub alert_raised_total: u64,
     pub alert_cleared_total: u64,
     pub alert_ack_received_total: u64,
@@ -401,6 +410,7 @@ struct BridgeMetrics {
     audit_publish_fail_total: AtomicU64,
     outbox_enqueued_total: AtomicU64,
     outbox_flushed_total: AtomicU64,
+    broker_acked_total: AtomicU64,
     alert_raised_total: AtomicU64,
     alert_cleared_total: AtomicU64,
     alert_ack_received_total: AtomicU64,
@@ -439,6 +449,9 @@ impl BridgeMetrics {
     }
     fn inc_outbox_enqueued(&self) {
         self.outbox_enqueued_total.fetch_add(1, Ordering::Relaxed);
+    }
+    fn inc_broker_acked(&self) {
+        self.broker_acked_total.fetch_add(1, Ordering::Relaxed);
     }
     fn add_outbox_flushed(&self, n: usize) {
         self.outbox_flushed_total
@@ -900,6 +913,7 @@ fn build_health_message(
         audit_publish_fail_total: metrics.audit_publish_fail_total.load(Ordering::Relaxed),
         outbox_enqueued_total: metrics.outbox_enqueued_total.load(Ordering::Relaxed),
         outbox_flushed_total: metrics.outbox_flushed_total.load(Ordering::Relaxed),
+        broker_acked_total: metrics.broker_acked_total.load(Ordering::Relaxed),
         alert_raised_total: metrics.alert_raised_total.load(Ordering::Relaxed),
         alert_cleared_total: metrics.alert_cleared_total.load(Ordering::Relaxed),
         alert_ack_received_total: metrics.alert_ack_received_total.load(Ordering::Relaxed),
@@ -994,6 +1008,10 @@ fn build_alert_message(
     }
 }
 
+/// MQTT-level keep-alive for the edge's broker session. Shared with the staleness
+/// watchdog so the two can never drift apart.
+const MQTT_KEEP_ALIVE: Duration = Duration::from_secs(10);
+
 #[async_trait]
 impl OutboxPublisher for AsyncClient {
     async fn publish(
@@ -1054,7 +1072,11 @@ async fn publish_with_outbox(
     match publisher.publish(topic.clone(), qos, retain, payload.clone()).await {
         Ok(_) => {
             debug!(
-                "mqtt publish ok topic='{}' qos={:?} retain={} bytes={}",
+                // "queued", not "ok": Ok here means the client ACCEPTED the message
+                // into its request channel, not that the broker got it. Saying "ok"
+                // is what let 1 h 13 min of total data loss look green on 2026-08-18.
+                // Real delivery is counted separately as broker_acked_total.
+                "mqtt publish queued topic='{}' qos={:?} retain={} bytes={}",
                 topic,
                 qos,
                 retain,
@@ -1205,7 +1227,7 @@ pub async fn run_mqtt_bridge(
         config.broker_host, config.broker_port, config.client_id
     );
     let mut opts = MqttOptions::new(&config.client_id, &config.broker_host, config.broker_port);
-    opts.set_keep_alive(Duration::from_secs(10));
+    opts.set_keep_alive(MQTT_KEEP_ALIVE);
     apply_edge_mqtt_security_from_env(&mut opts)?;
     let (client, mut event_loop): (AsyncClient, EventLoop) = AsyncClient::new(opts, 100);
     let cmd_topic = config.command_topic();
@@ -1670,14 +1692,101 @@ pub async fn run_mqtt_bridge(
         }
     });
 
+    let heartbeat_path = config.heartbeat_path.clone();
+    let mut last_beat: Option<Instant> = None;
+    let mut heartbeat_failing = false;
+
+    let mut watch = BrokerActivityWatch::new(MQTT_KEEP_ALIVE, Instant::now());
+    // Mirrors the watch's own last_activity purely so the log can say how long the
+    // silence actually was; the watch keeps its field private.
+    let mut watch_last_seen = Instant::now();
+
     loop {
+        // Written from THIS loop on purpose: what has to be proven alive is the loop
+        // that wedged on 2026-09-02. A beat emitted from a spawned task could keep
+        // ticking with this one dead, which is the failure it exists to catch.
+        if let Some(path) = &heartbeat_path {
+            let beat_now = Instant::now();
+            if crate::heartbeat::due(last_beat, beat_now) {
+                last_beat = Some(beat_now);
+                match crate::heartbeat::write(path, SystemTime::now()) {
+                    Ok(()) => {
+                        if heartbeat_failing {
+                            heartbeat_failing = false;
+                            info!("heartbeat writing recovered");
+                        }
+                    }
+                    // Never fatal: an agent that cannot write its heartbeat is still an
+                    // agent reading scales. Warned once so a broken path is visible
+                    // without filling the log every five seconds.
+                    Err(e) => {
+                        if !heartbeat_failing {
+                            heartbeat_failing = true;
+                            warn!(
+                                "cannot write the heartbeat to {}: {}; the supervisor will not be able to tell a wedged agent from a healthy one",
+                                path.display(),
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         if let Ok(flushed) = outbox.flush_pending(&client, flush_batch).await {
             if flushed > 0 {
                 metrics.add_outbox_flushed(flushed);
             }
         }
         let mut restart_requested = false;
-        match event_loop.poll().await {
+
+        // Presume the session dead after too long a silence, even though nothing
+        // errored. `poll()` can keep succeeding on a half-open socket -- it still
+        // emits outgoing PingReq, because writing into a dead socket's send buffer
+        // does not fail -- so only inbound traffic proves the broker is still there.
+        let now = Instant::now();
+        if watch.should_force_reconnect(now) {
+            warn!(
+                "no mqtt broker activity for {}s (> keep_alive*{}); presuming the session dead and reconnecting",
+                now.saturating_duration_since(watch_last_seen).as_secs(),
+                STALE_KEEP_ALIVE_MULTIPLIER
+            );
+            outbox.set_broker_session(BrokerSession::Down);
+            event_loop.clean();
+            watch.record_activity(now);
+            watch_last_seen = now;
+            continue;
+        }
+
+        // The timeout is the *remaining* time to the staleness deadline, never a fixed
+        // interval, so it only ever fires where the connection was going to be torn
+        // down anyway -- cancelling poll() mid-flight can then never leave a
+        // still-in-use connection half-written.
+        let polled = match tokio::time::timeout(watch.next_check_in(now), event_loop.poll()).await
+        {
+            Ok(polled) => polled,
+            Err(_) => {
+                warn!(
+                    "mqtt broker silent for {}s while polling (> keep_alive*{}); forcing reconnect",
+                    watch.stale_after().as_secs(),
+                    STALE_KEEP_ALIVE_MULTIPLIER
+                );
+                outbox.set_broker_session(BrokerSession::Down);
+                event_loop.clean();
+                let woke = Instant::now();
+                watch.record_activity(woke);
+                watch_last_seen = woke;
+                continue;
+            }
+        };
+
+        if matches!(&polled, Ok(Event::Incoming(_))) {
+            let heard = Instant::now();
+            watch.record_activity(heard);
+            watch_last_seen = heard;
+        }
+
+        match polled {
             Ok(Event::Incoming(Incoming::Publish(packet))) => {
                 debug!(
                     "mqtt incoming topic='{}' bytes={} qos={:?} retain={}",
@@ -1759,6 +1868,9 @@ pub async fn run_mqtt_bridge(
                         restart_requested = true;
                     }
                 }
+            }
+            Ok(Event::Incoming(Incoming::PubAck(_))) => {
+                metrics.inc_broker_acked();
             }
             Ok(Event::Incoming(Incoming::ConnAck(connack))) => {
                 outbox.set_broker_session(BrokerSession::Live);
@@ -2080,6 +2192,7 @@ mod tests {
             outbox_path: "./data/mqtt_outbox.db".to_string(),
             ticket_sequence_path: "./data/ticket_sequence.db".to_string(),
             outbox_flush_batch: 50,
+            heartbeat_path: None,
             outbox_max_messages: 1000,
             outbox_active_key_id: "v1".to_string(),
             outbox_prev_key_id: None,
@@ -2348,6 +2461,7 @@ mod tests {
             outbox_path: "./data/mqtt_outbox.db".to_string(),
             ticket_sequence_path: "./data/ticket_sequence.db".to_string(),
             outbox_flush_batch: 50,
+            heartbeat_path: None,
             outbox_max_messages: 1000,
             outbox_active_key_id: "v1".to_string(),
             outbox_prev_key_id: None,

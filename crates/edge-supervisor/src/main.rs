@@ -5,7 +5,7 @@ use anyhow::Result;
 use edge_supervisor::child::{AgentChild, ChildSpec};
 use edge_supervisor::config::{env_file_from_args, parse_env_file, SupervisorConfig};
 use edge_supervisor::control::ControlClient;
-use edge_supervisor::supervisor::{Supervisor, DEFAULT_CHILD_WATCH_INTERVAL};
+use edge_supervisor::supervisor::{HeartbeatWatch, Supervisor, DEFAULT_CHILD_WATCH_INTERVAL};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -53,11 +53,23 @@ async fn main() -> Result<()> {
         }
     };
 
+    info!(
+        "wedge detection: heartbeat at {} (stale after {}s, {}s of grace after each launch)",
+        cfg.heartbeat.path.display(),
+        cfg.heartbeat.stale_after.as_secs(),
+        cfg.heartbeat.grace.as_secs()
+    );
+
     let mut supervisor = Supervisor::new(
         AgentChild::new(spec),
         control,
         cfg.restart_delay,
         DEFAULT_CHILD_WATCH_INTERVAL,
+        Some(HeartbeatWatch {
+            path: cfg.heartbeat.path.clone(),
+            stale_after: cfg.heartbeat.stale_after,
+            grace: cfg.heartbeat.grace,
+        }),
     );
 
     info!("launching agent {}", cfg.agent_path.display());

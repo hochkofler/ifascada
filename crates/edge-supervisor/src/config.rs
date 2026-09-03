@@ -4,8 +4,14 @@
 //! mutating process-global state, which is racy across parallel tests.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// How stale the agent's heartbeat may get before it is presumed wedged.
+pub const DEFAULT_HEARTBEAT_STALE_SECS: u64 = 60;
+
+/// How long after launching the agent to ignore its heartbeat entirely.
+pub const DEFAULT_HEARTBEAT_GRACE_SECS: u64 = 90;
 
 /// How long central holds an unanswered long-poll before replying empty.
 pub const DEFAULT_WAIT_SECS: u64 = 25;
@@ -13,6 +19,24 @@ pub const DEFAULT_WAIT_SECS: u64 = 25;
 /// How long to wait before relaunching an agent that exited. Matches what `run-edge.ps1`
 /// has always done, so the supervisor is not a behaviour change in this respect.
 pub const DEFAULT_RESTART_DELAY_SECS: u64 = 5;
+
+/// Where the agent writes its heartbeat.
+///
+/// **This must derive exactly the same path the agent derives** (see
+/// `resolve_heartbeat_path` in `crates/edge-agent/src/main.rs`). If the two ever
+/// disagree, the supervisor reads a file nobody writes, calls a healthy agent wedged,
+/// and restarts it forever -- a failure that looks exactly like a crash loop.
+fn heartbeat_path(vars: &HashMap<String, String>) -> PathBuf {
+    let get = |k: &str| vars.get(k).map(|v| v.trim()).filter(|v| !v.is_empty());
+    if let Some(explicit) = get("EDGE_HEARTBEAT_PATH") {
+        return PathBuf::from(explicit);
+    }
+    let outbox = get("MQTT_OUTBOX_PATH").unwrap_or("./data/mqtt_outbox.db");
+    Path::new(outbox)
+        .parent()
+        .map(|dir| dir.join("edge.heartbeat"))
+        .unwrap_or_else(|| PathBuf::from("edge.heartbeat"))
+}
 
 /// Reads an `edge.env` into key/value pairs, accepting exactly what `run-edge.ps1`
 /// accepted: comments and lines with no `=` are skipped, and only the first `=` splits.
@@ -71,6 +95,15 @@ pub struct SupervisorConfig {
     pub log_dir: Option<PathBuf>,
     /// `None` means remote control is disabled and the supervisor only babysits the child.
     pub control: Option<ControlConfig>,
+    /// Where the agent writes its proof of life, and how patient to be with it.
+    pub heartbeat: HeartbeatConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeartbeatConfig {
+    pub path: PathBuf,
+    pub stale_after: Duration,
+    pub grace: Duration,
 }
 
 impl SupervisorConfig {
@@ -105,6 +138,21 @@ impl SupervisorConfig {
                 .unwrap_or(default_agent_path),
             restart_delay: Duration::from_secs(DEFAULT_RESTART_DELAY_SECS),
             log_dir: get("EDGE_SUPERVISOR_LOG_DIR").map(PathBuf::from),
+            heartbeat: HeartbeatConfig {
+                path: heartbeat_path(vars),
+                stale_after: Duration::from_secs(
+                    get("EDGE_SUPERVISOR_HEARTBEAT_STALE_SECS")
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .filter(|v| *v > 0)
+                        .unwrap_or(DEFAULT_HEARTBEAT_STALE_SECS),
+                ),
+                grace: Duration::from_secs(
+                    get("EDGE_SUPERVISOR_HEARTBEAT_GRACE_SECS")
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .filter(|v| *v > 0)
+                        .unwrap_or(DEFAULT_HEARTBEAT_GRACE_SECS),
+                ),
+            },
             control,
         }
     }
@@ -199,6 +247,43 @@ mod tests {
             Duration::from_secs(DEFAULT_WAIT_SECS),
             "an unparseable value must fall back, not disable control"
         );
+    }
+
+    /// The path is a contract with the agent, which derives it in
+    /// `resolve_heartbeat_path`. Both sides must land on the same file or the
+    /// supervisor restarts a healthy agent forever.
+    #[test]
+    fn the_heartbeat_sits_beside_the_outbox_by_default() {
+        let mut pairs = full();
+        pairs.push(("MQTT_OUTBOX_PATH", "C:/ProgramData/ifascada/edge/mqtt_outbox.db"));
+        let cfg = SupervisorConfig::from_vars(&vars(&pairs), PathBuf::from("edge-agent.exe"));
+        assert_eq!(
+            cfg.heartbeat.path,
+            PathBuf::from("C:/ProgramData/ifascada/edge").join("edge.heartbeat")
+        );
+    }
+
+    #[test]
+    fn an_explicit_heartbeat_path_wins() {
+        let mut pairs = full();
+        pairs.push(("MQTT_OUTBOX_PATH", "C:/data/mqtt_outbox.db"));
+        pairs.push(("EDGE_HEARTBEAT_PATH", "D:/otro/latido.txt"));
+        let cfg = SupervisorConfig::from_vars(&vars(&pairs), PathBuf::from("edge-agent.exe"));
+        assert_eq!(cfg.heartbeat.path, PathBuf::from("D:/otro/latido.txt"));
+    }
+
+    #[test]
+    fn the_heartbeat_thresholds_fall_back_to_the_defaults() {
+        let cfg = SupervisorConfig::from_vars(&vars(&full()), PathBuf::from("edge-agent.exe"));
+        assert_eq!(cfg.heartbeat.stale_after, Duration::from_secs(DEFAULT_HEARTBEAT_STALE_SECS));
+        assert_eq!(cfg.heartbeat.grace, Duration::from_secs(DEFAULT_HEARTBEAT_GRACE_SECS));
+    }
+
+    /// The grace window must outlast the staleness window, or a restarted agent is
+    /// judged before it has had time to write its first beat.
+    #[test]
+    fn the_default_grace_outlasts_the_default_staleness() {
+        assert!(DEFAULT_HEARTBEAT_GRACE_SECS > DEFAULT_HEARTBEAT_STALE_SECS);
     }
 
     /// `run-edge.ps1` wrote the agent's output to edge.out.log / edge.err.log, and
