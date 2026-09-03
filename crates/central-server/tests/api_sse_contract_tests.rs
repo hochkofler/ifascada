@@ -22,6 +22,7 @@ async fn run_migrations(client: &Client) {
         "migrations/0001_core_postgres.sql",
         "migrations/0003_tag_naming_governance.sql",
         "migrations/0005_fix_tag_naming_constraint_regex.sql",
+        "migrations/0006_context_hierarchy.sql",
     ] {
         let sql = std::fs::read_to_string(base.join(file)).expect("read migration file");
         client.batch_execute(&sql).await.expect("apply migration");

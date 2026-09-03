@@ -21,6 +21,7 @@ async fn run_migrations(client: &Client) {
         "migrations/0001_core_postgres.sql",
         "migrations/0003_tag_naming_governance.sql",
         "migrations/0005_fix_tag_naming_constraint_regex.sql",
+        "migrations/0006_context_hierarchy.sql",
         "migrations/0009_operational_events.sql",
         "migrations/0010_connection_domain_state.sql",
         "migrations/0011_device_domain_state.sql",
