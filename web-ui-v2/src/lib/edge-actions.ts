@@ -12,7 +12,7 @@
 import { postJson } from "./api-client";
 
 export type ResetEdgeRequest = { site_code: string; edge_code: string; reason?: string };
-export type ResetEdgeResponse = { accepted: boolean; topic: string; request_id: string | null };
+export type ResetEdgeResponse = { accepted: boolean; request_id: string | null };
 
 // Routed through api-client.ts's postJson() (built on the single request() auth-injection
 // point) rather than a raw fetch -- this is the one call that commands real hardware, so it

@@ -7,9 +7,10 @@ use rumqttc::QoS;
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
-use tracing::warn;
+use tracing::{debug, warn};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -111,6 +112,35 @@ impl Default for OutboxConfig {
     }
 }
 
+/// Outcome of one attempt to hand a message to the MQTT client.
+///
+/// The three cases exist because "the client's request channel is full" is not a failure
+/// and must not be treated as one: the message is still queued in the outbox and the next
+/// flush will take it. Collapsing it into an error would log an anomaly on every
+/// reconnection; collapsing it into success would drop the row.
+#[derive(Debug)]
+pub enum PublishAttempt {
+    Sent,
+    /// The client could not accept the message right now. Retry on a later flush.
+    Backpressure,
+    Failed(String),
+}
+
+/// Whether the bridge currently has a live MQTT session with the broker.
+///
+/// Deliberately not named `ConnectionState`: `domain::ConnectionState` already means the
+/// state of a *device* connection (a scale on a serial port), and `mqtt_bridge` handles
+/// both concepts in the same file.
+///
+/// The outbox needs this because handing a message to the client is not the same as
+/// delivering it: an accepted message leaves the durable queue and lives only in the
+/// client's in-memory `pending` list until a session exists to carry it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrokerSession {
+    Live,
+    Down,
+}
+
 #[async_trait]
 pub trait OutboxPublisher: Send + Sync {
     async fn publish(
@@ -120,12 +150,39 @@ pub trait OutboxPublisher: Send + Sync {
         retain: bool,
         payload: Vec<u8>,
     ) -> Result<(), String>;
+
+    /// Hand a message to the client **without ever waiting for room**.
+    ///
+    /// `flush_pending` runs on the same task that drives `event_loop.poll()`, and that
+    /// poll is the only thing that drains the client's bounded request channel. An
+    /// implementation that blocks here deadlocks the bridge permanently -- see the
+    /// regression test in this module.
+    ///
+    /// The default delegates to [`Self::publish`], which is correct for implementations
+    /// with no bounded channel to fill (the test doubles). [`rumqttc::AsyncClient`]
+    /// overrides it.
+    async fn try_publish(
+        &self,
+        topic: String,
+        qos: QoS,
+        retain: bool,
+        payload: Vec<u8>,
+    ) -> PublishAttempt {
+        match self.publish(topic, qos, retain, payload).await {
+            Ok(()) => PublishAttempt::Sent,
+            Err(e) => PublishAttempt::Failed(e),
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct PersistentMqttOutbox {
     conn: Arc<Mutex<Connection>>,
     cfg: OutboxConfig,
+    /// Shared with every clone, so the bridge's event loop can publish the session state
+    /// once and every task that flushes observes it. Starts disconnected: nothing has been
+    /// handed to a broker until a ConnAck says otherwise.
+    connected: Arc<AtomicBool>,
 }
 
 impl PersistentMqttOutbox {
@@ -158,7 +215,24 @@ impl PersistentMqttOutbox {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             cfg,
+            connected: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Records whether a live broker session exists. Called by the bridge's event loop on
+    /// ConnAck and whenever the loop drops the connection; every clone of this outbox sees
+    /// the change.
+    pub fn set_broker_session(&self, state: BrokerSession) {
+        self.connected
+            .store(state == BrokerSession::Live, Ordering::Relaxed);
+    }
+
+    pub fn broker_session(&self) -> BrokerSession {
+        if self.connected.load(Ordering::Relaxed) {
+            BrokerSession::Live
+        } else {
+            BrokerSession::Down
+        }
     }
 
     pub async fn enqueue(
@@ -240,6 +314,9 @@ impl PersistentMqttOutbox {
         publisher: &P,
         max_batch: usize,
     ) -> anyhow::Result<usize> {
+        if self.broker_session() == BrokerSession::Down {
+            return Ok(0);
+        }
         let pending = self.load_pending(max_batch)?;
         let mut sent = 0usize;
         for raw in pending {
@@ -254,14 +331,24 @@ impl PersistentMqttOutbox {
 
             let qos = u8_to_qos(msg.qos);
             match publisher
-                .publish(msg.topic.clone(), qos, msg.retain, msg.payload.clone())
+                .try_publish(msg.topic.clone(), qos, msg.retain, msg.payload.clone())
                 .await
             {
-                Ok(_) => {
+                PublishAttempt::Sent => {
                     self.delete_by_id(msg.id)?;
                     sent += 1;
                 }
-                Err(e) => {
+                PublishAttempt::Backpressure => {
+                    // Not a failure: the client has no room right now. Stop the batch so
+                    // the caller gets back to polling the event loop, which is what frees
+                    // that room. The row stays queued for the next flush.
+                    debug!(
+                        "mqtt outbox flush paused after {} message(s): client request channel full",
+                        sent
+                    );
+                    break;
+                }
+                PublishAttempt::Failed(e) => {
                     warn!("mqtt outbox flush failed, will retry later: {}", e);
                     break;
                 }
@@ -537,6 +624,7 @@ fn hash_to_32(input: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rumqttc::{AsyncClient, MqttOptions};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::Mutex as TokioMutex;
 
@@ -619,6 +707,7 @@ mod tests {
             fail_all: false,
             sent: TokioMutex::new(Vec::new()),
         };
+        outbox.set_broker_session(BrokerSession::Live);
         let sent = outbox.flush_pending(&pubr, 10).await.unwrap();
         assert_eq!(sent, 2);
         assert_eq!(outbox.len().await, 0);
@@ -640,6 +729,7 @@ mod tests {
             .await
             .unwrap();
 
+        outbox.set_broker_session(BrokerSession::Live);
         let sent = outbox
             .flush_pending(
                 &FakePublisher {
@@ -726,6 +816,7 @@ mod tests {
             fail_all: false,
             sent: TokioMutex::new(Vec::new()),
         };
+        outbox.set_broker_session(BrokerSession::Live);
         let sent = outbox.flush_pending(&pubr, 10).await.unwrap();
         assert_eq!(sent, 1);
         let delivered = pubr.sent.lock().await;
@@ -775,10 +866,119 @@ mod tests {
             fail_all: false,
             sent: TokioMutex::new(Vec::new()),
         };
+        outbox_new.set_broker_session(BrokerSession::Live);
         let sent = outbox_new.flush_pending(&pubr, 10).await.unwrap();
         assert_eq!(sent, 1);
         let delivered = pubr.sent.lock().await;
         assert_eq!(delivered[0], b"old-payload".to_vec());
         let _ = std::fs::remove_file(path);
     }
+
+    /// Regression test for the deadlock that left `lcc01` silent for 25 minutes on
+    /// 2026-09-02, after the broker came back from a power cut with a full outbox.
+    ///
+    /// `flush_pending` must never park waiting for room in the client's bounded request
+    /// channel. The only task that drains that channel is `event_loop.poll()`, and the
+    /// bridge's main loop calls `flush_pending` *before* it — so a flush that blocks on a
+    /// full channel keeps `poll()` from ever running again, nothing drains, and the wait
+    /// can never end. The socket sits in CLOSE_WAIT and the agent goes silent while still
+    /// looking alive to its supervisor.
+    #[tokio::test]
+    async fn test_flush_pending_yields_instead_of_blocking_on_a_full_request_channel() {
+        const CHANNEL_CAPACITY: usize = 4;
+        const ROWS: usize = 12;
+
+        let path = temp_file("mqtt_outbox_backpressure");
+        let outbox = PersistentMqttOutbox::new(&path, OutboxConfig::default()).unwrap();
+        for i in 0..ROWS {
+            outbox
+                .enqueue(
+                    OutboxMessageKind::Audit,
+                    format!("topic/{}", i),
+                    QoS::AtLeastOnce,
+                    false,
+                    vec![i as u8],
+                )
+                .await
+                .unwrap();
+        }
+
+        // A real client whose event loop is never polled: nothing drains the request
+        // channel, so it fills at CHANNEL_CAPACITY and stays full for the whole test.
+        // `_event_loop` must stay bound -- dropping it would close the channel and make
+        // the sends fail fast, which is a different situation from the one under test.
+        let opts = MqttOptions::new("outbox-backpressure-test", "127.0.0.1", 1883);
+        let (client, _event_loop) = AsyncClient::new(opts, CHANNEL_CAPACITY);
+        outbox.set_broker_session(BrokerSession::Live);
+
+        let flushed = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            outbox.flush_pending(&client, ROWS),
+        )
+        .await
+        .expect("flush_pending blocked on a full request channel instead of yielding")
+        .unwrap();
+
+        assert!(
+            flushed > 0,
+            "the flush must actually have published before hitting backpressure -- a zero              here means it returned for some other reason and the test proves nothing"
+        );
+        assert!(
+            flushed < ROWS,
+            "the channel holds {} and cannot have taken all {} rows",
+            CHANNEL_CAPACITY,
+            ROWS
+        );
+        assert_eq!(
+            outbox.len().await,
+            ROWS - flushed,
+            "rows that did not fit must stay in the outbox for the next attempt"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+
+    /// While there is no live broker session the outbox must not hand anything to the
+    /// client, even though `try_publish` would happily accept it.
+    ///
+    /// `flush_pending` deletes a row as soon as the client *accepts* it, and `rumqttc`
+    /// keeps accepted-but-undelivered requests in an unbounded in-memory `pending` queue.
+    /// Draining while disconnected therefore moves messages out of the durable SQLite
+    /// outbox and into volatile memory -- weakening exactly the guarantee the outbox
+    /// exists to provide, under exactly the conditions it exists for.
+    #[tokio::test]
+    async fn test_flush_pending_leaves_the_outbox_untouched_while_disconnected() {
+        let path = temp_file("mqtt_outbox_disconnected");
+        let outbox = PersistentMqttOutbox::new(&path, OutboxConfig::default()).unwrap();
+        outbox
+            .enqueue(
+                OutboxMessageKind::Audit,
+                "topic/a".to_string(),
+                QoS::AtLeastOnce,
+                false,
+                b"payload".to_vec(),
+            )
+            .await
+            .unwrap();
+
+        let publisher = FakePublisher {
+            fail_all: false,
+            sent: TokioMutex::new(Vec::new()),
+        };
+
+        outbox.set_broker_session(BrokerSession::Down);
+
+        let flushed = outbox.flush_pending(&publisher, 10).await.unwrap();
+
+        assert_eq!(flushed, 0, "nothing may be handed over while disconnected");
+        assert_eq!(outbox.len().await, 1, "the row must stay queued");
+        assert!(
+            publisher.sent.lock().await.is_empty(),
+            "the publisher must not have been called at all"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
 }

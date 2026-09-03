@@ -22,6 +22,7 @@ async fn run_migrations(client: &Client) {
         "migrations/0001_core_postgres.sql",
         "migrations/0003_tag_naming_governance.sql",
         "migrations/0005_fix_tag_naming_constraint_regex.sql",
+        "migrations/0006_context_hierarchy.sql",
     ] {
         let sql = std::fs::read_to_string(base.join(file)).expect("read migration file");
         client.batch_execute(&sql).await.expect("apply migration");
@@ -162,6 +163,8 @@ async fn spawn_test_server(read_client: Client) -> (String, tokio::task::JoinHan
             runtime_config_path: "crates/edge-agent/config/bootstrap.example.json".to_string(),
         },
         mqtt_cmd: None,
+        waiters: central_server::edge_control::EdgeWaiters::new(),
+        control_wait: std::time::Duration::from_millis(50),
     };
     let server = tokio::spawn(async move {
         let _ = run_api_server(state, &bind).await;
@@ -257,6 +260,8 @@ async fn sse_default_excludes_raw_and_no_replay() {
             runtime_config_path: "crates/edge-agent/config/bootstrap.example.json".to_string(),
         },
         mqtt_cmd: None,
+        waiters: central_server::edge_control::EdgeWaiters::new(),
+        control_wait: std::time::Duration::from_millis(50),
     };
     let server = tokio::spawn(async move {
         let _ = run_api_server(state, &bind).await;
@@ -321,6 +326,8 @@ async fn sse_replay_true_returns_history() {
             runtime_config_path: "crates/edge-agent/config/bootstrap.example.json".to_string(),
         },
         mqtt_cmd: None,
+        waiters: central_server::edge_control::EdgeWaiters::new(),
+        control_wait: std::time::Duration::from_millis(50),
     };
     let server = tokio::spawn(async move {
         let _ = run_api_server(state, &bind).await;

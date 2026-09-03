@@ -67,11 +67,15 @@ function New-UpdateFixture {
 Describe "build-edge-package.ps1 manifest" {
     It "copies a supplied binary and writes its real SHA-256" {
         $source = Join-Path $TestDrive "build\edge-agent.exe"
+        $supervisorSource = Join-Path $TestDrive "build\edge-supervisor.exe"
         $output = Join-Path $TestDrive "build\package"
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $source) | Out-Null
         [IO.File]::WriteAllText($source, "release-binary")
+        # Ambas rutas se pasan explicitamente: sin -SupervisorPath el empaquetador compilaria
+        # el crate de verdad, y una prueba de contrato del manifiesto no debe depender de cargo.
+        [IO.File]::WriteAllText($supervisorSource, "supervisor-binary")
 
-        & $builder -BinaryPath $source -OutputRoot $output -Version "1.1.0" -ConfigSchemaVersion 2 -MinimumCentralVersion "1.0.0"
+        & $builder -BinaryPath $source -SupervisorPath $supervisorSource -OutputRoot $output -Version "1.1.0" -ConfigSchemaVersion 2 -MinimumCentralVersion "1.0.0"
 
         $packagedBinary = Join-Path $output "bin\edge-agent.exe"
         $manifest = Get-Content (Join-Path $output "release-manifest.json") -Raw | ConvertFrom-Json
@@ -81,6 +85,29 @@ Describe "build-edge-package.ps1 manifest" {
         $manifest.binary.path | Should Be "bin/edge-agent.exe"
         $manifest.binary.sha256 | Should Be (Get-FileHash $packagedBinary -Algorithm SHA256).Hash.ToLowerInvariant()
         Test-Path (Join-Path $output "scripts\update-edge.ps1") | Should Be $true
+    }
+
+    It "ships the supervisor beside the agent and declares its hash" {
+        # Sin este binario en el paquete, install-edge.ps1 aborta con "Missing binary": el
+        # supervisor es lo que la tarea programada lanza.
+        $source = Join-Path $TestDrive "sup\edge-agent.exe"
+        $supervisorSource = Join-Path $TestDrive "sup\edge-supervisor.exe"
+        $output = Join-Path $TestDrive "sup\package"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $source) | Out-Null
+        [IO.File]::WriteAllText($source, "release-binary")
+        [IO.File]::WriteAllText($supervisorSource, "supervisor-binary")
+
+        & $builder -BinaryPath $source -SupervisorPath $supervisorSource -OutputRoot $output -Version "1.1.0"
+
+        $packagedSupervisor = Join-Path $output "bin\edge-supervisor.exe"
+        Test-Path $packagedSupervisor | Should Be $true
+        [IO.File]::ReadAllText($packagedSupervisor) | Should Be "supervisor-binary"
+
+        $manifest = Get-Content (Join-Path $output "release-manifest.json") -Raw | ConvertFrom-Json
+        $manifest.supervisor.path | Should Be "bin/edge-supervisor.exe"
+        $manifest.supervisor.sha256 | Should Be (Get-FileHash $packagedSupervisor -Algorithm SHA256).Hash.ToLowerInvariant()
+        # binary.path no se toca: update-edge.ps1 exige que sea exactamente esto.
+        $manifest.binary.path | Should Be "bin/edge-agent.exe"
     }
 
     It "rejects a version that the updater cannot safely consume" {

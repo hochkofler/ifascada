@@ -4,6 +4,7 @@ members = [
     "crates/application",
     "crates/infrastructure",
     "crates/edge-agent",
+    "crates/edge-supervisor",
     "crates/central-server",
     "crates/launcher",
 ]

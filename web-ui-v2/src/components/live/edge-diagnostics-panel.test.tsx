@@ -16,7 +16,6 @@ describe("EdgeDiagnosticsPanel reset action", () => {
   it("shows confirmed-recovered feedback once last_seen_at actually advances after reset", async () => {
     vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({
       accepted: true,
-      topic: "x",
       request_id: null,
     });
     vi.spyOn(apiClient, "fetchEdgesCurrent")
@@ -39,7 +38,6 @@ describe("EdgeDiagnosticsPanel reset action", () => {
   it("shows a no-recovery-confirmed warning when accepted:true but last_seen_at never advances", async () => {
     vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({
       accepted: true,
-      topic: "x",
       request_id: null,
     });
     vi.spyOn(apiClient, "fetchEdgesCurrent").mockResolvedValue([
@@ -104,7 +102,6 @@ describe("EdgeDiagnosticsPanel reset action", () => {
   it("shows an error state (not a permanently stuck 'sent' state) when the poll loop itself rejects", async () => {
     vi.spyOn(edgeActions, "resetEdge").mockResolvedValue({
       accepted: true,
-      topic: "x",
       request_id: null,
     });
     vi.spyOn(apiClient, "fetchEdgesCurrent")

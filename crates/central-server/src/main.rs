@@ -143,6 +143,14 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|_| "crates/edge-agent/config/bootstrap.example.json".to_string()),
         },
         mqtt_cmd,
+        waiters: central_server::edge_control::EdgeWaiters::new(),
+        control_wait: std::time::Duration::from_secs(
+            std::env::var("CENTRAL_EDGE_CONTROL_WAIT_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(25),
+        ),
     };
 
     let ops_retention_days = std::env::var("CENTRAL_OPS_EVENTS_RETENTION_DAYS")
