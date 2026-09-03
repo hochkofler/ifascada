@@ -237,6 +237,24 @@ updater, no el supervisor.
 El updater no toca `DataRoot`, así que el outbox y la secuencia de tickets se preservan
 igual que hoy.
 
+### El updater no reemplaza el supervisor — decidido
+
+`update-edge.ps1` valida que `manifest.binary.path` sea **exactamente** `bin/edge-agent.exe`
+y solo reemplaza ese archivo. Se deja así a propósito:
+
+- El supervisor es deliberadamente chico y sin estado; está pensado para no cambiar seguido.
+- Extender la transacción a dos binarios duplica los modos de fallo del único script cuyo
+  propósito es el rollback seguro, y hoy lo cubren 20 pruebas de contrato que habría que
+  mantener verdes.
+- El rollout es Windows primero, en dos hosts alcanzables donde reinstalar es barato.
+
+**Consecuencia operativa:** el supervisor se instala con `install-edge.ps1`, no se actualiza
+con `update-edge.ps1`. Cambiarlo exige reinstalar. El paquete igual declara su SHA-256 bajo
+la clave `supervisor` del manifiesto —&nbsp;aparte de `binary`, que el updater exige intacta&nbsp;—
+para poder verificar qué versión quedó desplegada.
+
+Hacerlo después no cuesta más que hacerlo ahora.
+
 ## Reinicio: matar y relanzar
 
 Sin apagado ordenado. Un agente colgado no responde a un pedido ordenado — es justo el caso
@@ -281,6 +299,14 @@ agente ya tolera reinicios duros; es el procedimiento que se aplicó a mano el 2
 Durante la transición conviven hosts con `run-edge.ps1` y hosts con supervisor. Los primeros
 simplemente no responden a las órdenes encoladas, y eso se ve como `delivered_at` en null —
 no como un fallo silencioso.
+
+**Trampa de secuencia, a tener presente antes y no después:** en cuanto central esté
+desplegado, `/api/edges/reset` solo encola. Un host que siga con `run-edge.ps1` no tiene
+quién lea esa cola, así que el botón de la UI deja de hacer nada para él y el operador ve
+`timed-out-no-recovery`. Con el parque actual eso significa que **central, la UI y el
+supervisor de `lcc01` tienen que ir en la misma ventana**, y que `lcc02` queda sin botón de
+reinicio hasta que reciba el suyo. El diagnóstico está en `delivered_at`: null significa que
+nadie preguntó.
 
 ## Riesgos abiertos
 
