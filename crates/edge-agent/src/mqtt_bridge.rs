@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime};
 use crate::broker_watch::{BrokerActivityWatch, STALE_KEEP_ALIVE_MULTIPLIER};
 use std::{fs, path::Path};
 use tokio::net::TcpStream;
@@ -38,6 +39,9 @@ pub struct MqttBridgeConfig {
     pub outbox_path: String,
     pub ticket_sequence_path: String,
     pub outbox_flush_batch: usize,
+    /// Where the agent writes its proof of life for the supervisor. `None` disables it,
+    /// which leaves the supervisor able to notice only an agent that exits.
+    pub heartbeat_path: Option<PathBuf>,
     pub outbox_max_messages: usize,
     pub outbox_active_key_id: String,
     pub outbox_prev_key_id: Option<String>,
@@ -1675,12 +1679,47 @@ pub async fn run_mqtt_bridge(
         }
     });
 
+    let heartbeat_path = config.heartbeat_path.clone();
+    let mut last_beat: Option<Instant> = None;
+    let mut heartbeat_failing = false;
+
     let mut watch = BrokerActivityWatch::new(MQTT_KEEP_ALIVE, Instant::now());
     // Mirrors the watch's own last_activity purely so the log can say how long the
     // silence actually was; the watch keeps its field private.
     let mut watch_last_seen = Instant::now();
 
     loop {
+        // Written from THIS loop on purpose: what has to be proven alive is the loop
+        // that wedged on 2026-09-02. A beat emitted from a spawned task could keep
+        // ticking with this one dead, which is the failure it exists to catch.
+        if let Some(path) = &heartbeat_path {
+            let beat_now = Instant::now();
+            if crate::heartbeat::due(last_beat, beat_now) {
+                last_beat = Some(beat_now);
+                match crate::heartbeat::write(path, SystemTime::now()) {
+                    Ok(()) => {
+                        if heartbeat_failing {
+                            heartbeat_failing = false;
+                            info!("heartbeat writing recovered");
+                        }
+                    }
+                    // Never fatal: an agent that cannot write its heartbeat is still an
+                    // agent reading scales. Warned once so a broken path is visible
+                    // without filling the log every five seconds.
+                    Err(e) => {
+                        if !heartbeat_failing {
+                            heartbeat_failing = true;
+                            warn!(
+                                "cannot write the heartbeat to {}: {}; the supervisor will not be able to tell a wedged agent from a healthy one",
+                                path.display(),
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         if let Ok(flushed) = outbox.flush_pending(&client, flush_batch).await {
             if flushed > 0 {
                 metrics.add_outbox_flushed(flushed);
@@ -2137,6 +2176,7 @@ mod tests {
             outbox_path: "./data/mqtt_outbox.db".to_string(),
             ticket_sequence_path: "./data/ticket_sequence.db".to_string(),
             outbox_flush_batch: 50,
+            heartbeat_path: None,
             outbox_max_messages: 1000,
             outbox_active_key_id: "v1".to_string(),
             outbox_prev_key_id: None,
@@ -2405,6 +2445,7 @@ mod tests {
             outbox_path: "./data/mqtt_outbox.db".to_string(),
             ticket_sequence_path: "./data/ticket_sequence.db".to_string(),
             outbox_flush_batch: 50,
+            heartbeat_path: None,
             outbox_max_messages: 1000,
             outbox_active_key_id: "v1".to_string(),
             outbox_prev_key_id: None,

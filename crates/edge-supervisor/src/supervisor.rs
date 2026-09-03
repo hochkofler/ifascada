@@ -6,6 +6,9 @@
 
 use crate::child::AgentChild;
 use crate::control::{ControlClient, Order};
+use crate::heartbeat::{self, Liveness};
+use std::path::PathBuf;
+use std::time::{Instant, SystemTime};
 use anyhow::Result;
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -25,8 +28,20 @@ pub enum Step {
     /// central about it did not -- central will hand the order back, and a second restart
     /// is better than an edge everyone believes was restarted and was not.
     OrderExecuted { request_id: String, acked: bool },
+    /// The agent was alive but had stopped beating, so it was restarted. This is the
+    /// case the supervisor was blind to before: a process that is running and doing
+    /// nothing looks exactly like a healthy one from the outside.
+    ChildWedged,
     /// Central could not be reached or refused us. The caller backs off.
     ControlFailed(String),
+}
+
+/// Where the agent's heartbeat lives and how patient to be with it.
+#[derive(Debug, Clone)]
+pub struct HeartbeatWatch {
+    pub path: PathBuf,
+    pub stale_after: Duration,
+    pub grace: Duration,
 }
 
 pub struct Supervisor {
@@ -34,6 +49,10 @@ pub struct Supervisor {
     control: Option<ControlClient>,
     restart_delay: Duration,
     child_watch_interval: Duration,
+    /// `None` disables wedge detection: the supervisor then only notices an agent
+    /// that exits, which is what it did before the heartbeat existed.
+    heartbeat: Option<HeartbeatWatch>,
+    spawned_at: Instant,
 }
 
 impl Supervisor {
@@ -42,18 +61,31 @@ impl Supervisor {
         control: Option<ControlClient>,
         restart_delay: Duration,
         child_watch_interval: Duration,
+        heartbeat: Option<HeartbeatWatch>,
     ) -> Self {
         Supervisor {
             child,
             control,
             restart_delay,
             child_watch_interval,
+            heartbeat,
+            spawned_at: Instant::now(),
         }
     }
 
     /// Launches the agent for the first time.
     pub fn start(&mut self) -> Result<()> {
-        self.child.spawn()
+        self.spawn_child()
+    }
+
+    /// Every launch restarts the grace window: a freshly started agent has not written
+    /// a heartbeat yet, and judging it immediately would kill it in a loop.
+    fn spawn_child(&mut self) -> Result<()> {
+        let result = self.child.spawn();
+        if result.is_ok() {
+            self.spawned_at = Instant::now();
+        }
+        result
     }
 
     pub fn child_pid(&self) -> Option<u32> {
@@ -73,23 +105,25 @@ impl Supervisor {
                 child,
                 control,
                 child_watch_interval,
+                heartbeat,
+                spawned_at,
                 ..
             } = self;
             let interval = *child_watch_interval;
+            let hb = heartbeat.as_ref();
+            let since = *spawned_at;
             match control.as_ref() {
-                None => {
-                    watch_until_exit(child, interval).await;
-                    Wake::ChildDied
-                }
+                None => Wake::Trouble(watch_child(child, hb, since, interval).await),
                 Some(control) => tokio::select! {
                     result = control.wait_for_order() => Wake::Order(result),
-                    _ = watch_until_exit(child, interval) => Wake::ChildDied,
+                    trouble = watch_child(child, hb, since, interval) => Wake::Trouble(trouble),
                 },
             }
         };
 
         match wake {
-            Wake::ChildDied => self.relaunch().await,
+            Wake::Trouble(Trouble::Exited) => self.relaunch().await,
+            Wake::Trouble(Trouble::Wedged) => self.restart_wedged().await,
             Wake::Order(Err(e)) => Step::ControlFailed(e.to_string()),
             Wake::Order(Ok(Order::None)) => Step::Quiet,
             Wake::Order(Ok(Order::Restart { request_id })) => {
@@ -110,6 +144,9 @@ impl Supervisor {
                         request_id, acked
                     );
                 }
+                Step::ChildWedged => {
+                    warn!("agent was wedged and has been restarted");
+                }
                 Step::ControlFailed(e) => {
                     warn!("control channel unavailable: {}; retrying", e);
                     // Central being down or restarting is expected. A short pause keeps
@@ -126,13 +163,28 @@ impl Supervisor {
         if !self.restart_delay.is_zero() {
             tokio::time::sleep(self.restart_delay).await;
         }
-        match self.child.spawn() {
+        match self.spawn_child() {
             Ok(()) => info!("agent relaunched (pid={:?})", self.child.pid()),
             // Not fatal: the next turn sees no running child and tries again. Logged at
             // error level because an agent that will not start is an incident.
             Err(e) => error!("could not relaunch the agent: {:#}", e),
         }
         Step::ChildRestarted
+    }
+
+    /// Replace an agent that is running but no longer beating. No restart delay: this is
+    /// already the slow path -- the agent has been useless for at least the staleness
+    /// window by the time we get here.
+    async fn restart_wedged(&mut self) -> Step {
+        if let Err(e) = self.child.kill() {
+            warn!("could not stop the wedged agent cleanly: {:#}", e);
+        }
+        if let Err(e) = self.spawn_child() {
+            error!("could not restart the wedged agent: {:#}", e);
+        } else {
+            info!("wedged agent replaced (pid={:?})", self.child.pid());
+        }
+        Step::ChildWedged
     }
 
     /// Carry out an order from central. No restart delay here: a person asked for this and
@@ -142,7 +194,7 @@ impl Supervisor {
         if let Err(e) = self.child.kill() {
             warn!("could not stop the agent cleanly: {:#}", e);
         }
-        if let Err(e) = self.child.spawn() {
+        if let Err(e) = self.spawn_child() {
             error!("could not start the agent after the order: {:#}", e);
         }
 
@@ -168,15 +220,50 @@ impl Supervisor {
 }
 
 enum Wake {
-    ChildDied,
+    Trouble(Trouble),
     Order(Result<Order>),
 }
 
-/// Returns once the child is no longer running.
-async fn watch_until_exit(child: &mut AgentChild, interval: Duration) {
+/// Why the child stopped being something to leave alone.
+enum Trouble {
+    /// The process is gone.
+    Exited,
+    /// The process is running and has stopped beating.
+    Wedged,
+}
+
+/// Returns once the child needs attention: it exited, or it is alive and no longer
+/// beating. Without a heartbeat configured only the first case can ever be detected,
+/// which is where this component started.
+async fn watch_child(
+    child: &mut AgentChild,
+    heartbeat: Option<&HeartbeatWatch>,
+    spawned_at: Instant,
+    interval: Duration,
+) -> Trouble {
     loop {
         if !child.is_running() {
-            return;
+            return Trouble::Exited;
+        }
+        if let Some(hb) = heartbeat {
+            let age = heartbeat::read_age(&hb.path, SystemTime::now());
+            match heartbeat::assess(age, spawned_at.elapsed(), hb.stale_after, hb.grace) {
+                Liveness::Stale { by } => {
+                    error!(
+                        "agent is running but its last heartbeat is {}s old; presuming it wedged",
+                        by.as_secs()
+                    );
+                    return Trouble::Wedged;
+                }
+                Liveness::Missing => {
+                    error!(
+                        "agent is running but has written no heartbeat at {}; presuming it wedged",
+                        hb.path.display()
+                    );
+                    return Trouble::Wedged;
+                }
+                Liveness::Alive | Liveness::InGrace => {}
+            }
         }
         tokio::time::sleep(interval).await;
     }
@@ -230,7 +317,85 @@ mod tests {
             // hot crash loop, and waiting it out would just make the suite slow.
             Duration::ZERO,
             Duration::from_millis(50),
+            None,
         )
+    }
+
+    /// The gap this closes. Before the heartbeat the supervisor only noticed an agent
+    /// that EXITED; one that stayed alive doing nothing -- lcc01 on 2026-09-02, 25
+    /// minutes of silence with the process Running -- was indistinguishable from a
+    /// healthy one.
+    #[tokio::test]
+    async fn an_agent_that_is_alive_but_not_beating_is_restarted() {
+        let hb = HeartbeatWatch {
+            // A path nothing ever writes: the child is the `sleeper`, which has no
+            // idea what a heartbeat is. That is precisely a wedged agent.
+            path: std::env::temp_dir().join("edge-sup-never-written.hb"),
+            stale_after: Duration::from_millis(1),
+            grace: Duration::ZERO,
+        };
+        let _ = std::fs::remove_file(&hb.path);
+
+        let mut sup = Supervisor::new(
+            AgentChild::new(sleeper()),
+            None,
+            Duration::ZERO,
+            Duration::from_millis(50),
+            Some(hb),
+        );
+        sup.start().expect("start failed");
+        let before = sup.child_pid().expect("no initial pid");
+
+        let step = tokio::time::timeout(Duration::from_secs(10), sup.step())
+            .await
+            .expect("the supervisor never noticed the agent was wedged");
+
+        assert_eq!(step, Step::ChildWedged);
+        assert_ne!(
+            before,
+            sup.child_pid().expect("the agent must be running again"),
+            "a wedged agent must actually be replaced, not just reported"
+        );
+    }
+
+    /// The other half of the guarantee: a healthy agent that IS beating must be left
+    /// alone. A wedge detector that restarts working agents is worse than none.
+    #[tokio::test]
+    async fn an_agent_that_keeps_beating_is_left_alone() {
+        let path = std::env::temp_dir().join(format!(
+            "edge-sup-beating-{}.hb",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, heartbeat::render(std::time::SystemTime::now())).unwrap();
+
+        let hb = HeartbeatWatch {
+            path: path.clone(),
+            stale_after: Duration::from_secs(60),
+            grace: Duration::ZERO,
+        };
+        let mut sup = Supervisor::new(
+            AgentChild::new(sleeper()),
+            None,
+            Duration::ZERO,
+            Duration::from_millis(50),
+            Some(hb),
+        );
+        sup.start().expect("start failed");
+        let before = sup.child_pid().unwrap();
+
+        // Nothing should happen, so the step must simply not return.
+        let outcome = tokio::time::timeout(Duration::from_millis(600), sup.step()).await;
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            outcome.is_err(),
+            "a beating agent must not be disturbed, got {:?}",
+            outcome
+        );
+        assert_eq!(sup.child_pid(), Some(before));
     }
 
     #[tokio::test]

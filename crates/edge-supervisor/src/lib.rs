@@ -4,4 +4,5 @@
 pub mod child;
 pub mod config;
 pub mod control;
+pub mod heartbeat;
 pub mod supervisor;
