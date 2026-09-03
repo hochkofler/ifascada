@@ -257,6 +257,10 @@ pub struct EdgeHealthMqttMessage {
     pub audit_publish_fail_total: u64,
     pub outbox_enqueued_total: u64,
     pub outbox_flushed_total: u64,
+    /// QoS1 PUBACKs seen from the broker. Unlike everything queued, this is proof the
+    /// other side received something: a gap that stops growing while messages keep
+    /// being queued is a stuck link, visible without reading the broker's own log.
+    pub broker_acked_total: u64,
     pub alert_raised_total: u64,
     pub alert_cleared_total: u64,
     pub alert_ack_received_total: u64,
@@ -406,6 +410,7 @@ struct BridgeMetrics {
     audit_publish_fail_total: AtomicU64,
     outbox_enqueued_total: AtomicU64,
     outbox_flushed_total: AtomicU64,
+    broker_acked_total: AtomicU64,
     alert_raised_total: AtomicU64,
     alert_cleared_total: AtomicU64,
     alert_ack_received_total: AtomicU64,
@@ -444,6 +449,9 @@ impl BridgeMetrics {
     }
     fn inc_outbox_enqueued(&self) {
         self.outbox_enqueued_total.fetch_add(1, Ordering::Relaxed);
+    }
+    fn inc_broker_acked(&self) {
+        self.broker_acked_total.fetch_add(1, Ordering::Relaxed);
     }
     fn add_outbox_flushed(&self, n: usize) {
         self.outbox_flushed_total
@@ -905,6 +913,7 @@ fn build_health_message(
         audit_publish_fail_total: metrics.audit_publish_fail_total.load(Ordering::Relaxed),
         outbox_enqueued_total: metrics.outbox_enqueued_total.load(Ordering::Relaxed),
         outbox_flushed_total: metrics.outbox_flushed_total.load(Ordering::Relaxed),
+        broker_acked_total: metrics.broker_acked_total.load(Ordering::Relaxed),
         alert_raised_total: metrics.alert_raised_total.load(Ordering::Relaxed),
         alert_cleared_total: metrics.alert_cleared_total.load(Ordering::Relaxed),
         alert_ack_received_total: metrics.alert_ack_received_total.load(Ordering::Relaxed),
@@ -1063,7 +1072,11 @@ async fn publish_with_outbox(
     match publisher.publish(topic.clone(), qos, retain, payload.clone()).await {
         Ok(_) => {
             debug!(
-                "mqtt publish ok topic='{}' qos={:?} retain={} bytes={}",
+                // "queued", not "ok": Ok here means the client ACCEPTED the message
+                // into its request channel, not that the broker got it. Saying "ok"
+                // is what let 1 h 13 min of total data loss look green on 2026-08-18.
+                // Real delivery is counted separately as broker_acked_total.
+                "mqtt publish queued topic='{}' qos={:?} retain={} bytes={}",
                 topic,
                 qos,
                 retain,
@@ -1855,6 +1868,9 @@ pub async fn run_mqtt_bridge(
                         restart_requested = true;
                     }
                 }
+            }
+            Ok(Event::Incoming(Incoming::PubAck(_))) => {
+                metrics.inc_broker_acked();
             }
             Ok(Event::Incoming(Incoming::ConnAck(connack))) => {
                 outbox.set_broker_session(BrokerSession::Live);
