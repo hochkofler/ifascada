@@ -17,7 +17,8 @@ for file in \
   /migrations/0011_device_domain_state.sql \
   /migrations/0012_edges_metadata_json.sql \
   /migrations/0016_telemetry_received_at.sql \
-  /migrations/0020_edge_control_command.sql; do
+  /migrations/0020_edge_control_command.sql \
+  /migrations/0021_mark_action_executions_obsolete.sql; do
   run_sql "${file}"
 done
 
