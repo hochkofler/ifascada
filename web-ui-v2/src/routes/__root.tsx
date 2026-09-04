@@ -1,7 +1,7 @@
 import { createRootRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell-chrome/app-shell";
 import { IfaScadaLogo } from "@/components/brand/ifascada-logo";
-import { MessageLogDrawer } from "@/components/notifications";
+import { MessageLogDrawer, useActionFailureNotices } from "@/components/notifications";
 import { NAV_MODULES } from "@/components/nav-config";
 
 /**
@@ -16,6 +16,10 @@ declare module "@tanstack/react-router" {
 }
 
 function RootLayout() {
+  // En el shell y no en una pagina: un aviso de accion fallida tiene que llegar estes
+  // donde estes, no solo con la vista En vivo abierta.
+  useActionFailureNotices();
+
   return (
     <AppShell
       branding={{ logo: <IfaScadaLogo /> }}

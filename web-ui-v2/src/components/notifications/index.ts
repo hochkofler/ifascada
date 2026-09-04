@@ -10,3 +10,4 @@ export { useMessageLogStore } from "./message-log.store";
 export { MessageLogDrawer } from "./components/message-log-drawer";
 export { NOTIFICATIONS_NS, registerNotificationsLocales } from "./i18n";
 export type { SystemMessage, MessageLevel, NotifyOptions } from "./types";
+export { useActionFailureNotices } from "./use-action-failure-notices";
