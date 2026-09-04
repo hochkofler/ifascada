@@ -1,4 +1,10 @@
 export const es = {
+  notifications: {
+    actionFailed: {
+      title: "Falló una acción en {{edge}}",
+      collapsed: "Fallaron {{count}} acciones en los edges",
+    },
+  },
   nav: {
     connections: "Conexiones",
     operations: "Operación",

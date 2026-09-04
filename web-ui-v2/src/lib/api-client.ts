@@ -113,6 +113,20 @@ export function fetchTagHistory(tagCode: string, limit = 200, offset = 0) {
  * `OperationalEventDto` (api.rs:116-130). Confirmed live and field-matched against that DTO by
  * Task 13's review; el esquema de api-schemas.ts esta derivado de ese mismo DTO.
  */
+/**
+ * Acciones que alguien pidio a un edge y fallaron, de todo el parque.
+ *
+ * `event_type` filtra con ILIKE en central, asi que este valor exacto trae solo los rechazos.
+ * Es la senal del aviso en la aplicacion: sirve en cualquier modalidad de edge, a diferencia
+ * del silencio, que solo significa un problema en los que reportan de forma continua.
+ */
+export function fetchFailedActions(limit = 20) {
+  return getParsed(
+    `/api/ops/events?event_type=${encodeURIComponent("action.command.rejected")}&limit=${limit}`,
+    z.array(opsEventSchema)
+  );
+}
+
 export function fetchEdgeEvents(edgeCode: string, limit = 20) {
   return getParsed(
     `/api/ops/events?edge=${encodeURIComponent(edgeCode)}&limit=${limit}`,
