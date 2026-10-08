@@ -153,21 +153,15 @@ async fn main() -> Result<()> {
         ),
     };
 
-    let ops_retention_days = std::env::var("CENTRAL_OPS_EVENTS_RETENTION_DAYS")
-        .ok()
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(90)
-        .max(1);
-    let ops_cleanup_interval_secs = std::env::var("CENTRAL_OPS_EVENTS_CLEANUP_INTERVAL_SECS")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(3600)
-        .max(60);
-    let ops_cleanup_enabled = std::env::var("CENTRAL_OPS_EVENTS_CLEANUP_ENABLED")
-        .ok()
-        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        .unwrap_or(true);
-    if ops_cleanup_enabled {
+    let ops_cleanup = central_server::ops_events_cleanup::OpsEventsCleanupConfig::from_env();
+    let ops_retention_days = ops_cleanup.retention_days;
+    let ops_cleanup_interval_secs = ops_cleanup.interval_secs;
+    if ops_cleanup.enabled {
+        tracing::warn!(
+            "ops events cleanup ENABLED: operational_events older than {} days will be deleted every {}s",
+            ops_retention_days,
+            ops_cleanup_interval_secs
+        );
         let dsn_cleanup = dsn.clone();
         tokio::spawn(async move {
             let (client, connection) = match tokio_postgres::connect(&dsn_cleanup, NoTls).await {

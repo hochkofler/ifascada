@@ -256,9 +256,9 @@ Firewall minimo:
 | `CENTRAL_EDGE_CONFIG_SIGNING_SECRET` | `dev-edge-config-signing-secret` | si si config remota | Secreto HMAC para firmar config |
 | `CENTRAL_EDGE_CONFIG_SIGNING_KEY_ID` | `v1` | no | Identificador de llave de firma |
 | `CENTRAL_EDGE_RUNTIME_CONFIG_PATH` | `crates/edge-agent/config/bootstrap.example.json` | si si config remota | Ruta del payload runtime firmado |
-| `CENTRAL_OPS_EVENTS_RETENTION_DAYS` | `90` | no | Retencion de `operational_events` |
+| `CENTRAL_OPS_EVENTS_RETENTION_DAYS` | `90` | no | Antiguedad a partir de la cual se borran `operational_events` (solo si la limpieza esta activa) |
 | `CENTRAL_OPS_EVENTS_CLEANUP_INTERVAL_SECS` | `3600` | no | Frecuencia de limpieza |
-| `CENTRAL_OPS_EVENTS_CLEANUP_ENABLED` | `true` | no | Activa limpieza periodica |
+| `CENTRAL_OPS_EVENTS_CLEANUP_ENABLED` | `false` | no | Activa la limpieza periodica (`true`/`1`). Apagada por defecto: `operational_events` es la base del audit trail y no debe purgarse sin una politica de retencion aprobada |
 | `CENTRAL_EDGE_STALE_AFTER_SECS_DEFAULT` | `45` | no | Umbral stale para estado de edge/tag/device |
 
 ### 11.3 Edge agent
